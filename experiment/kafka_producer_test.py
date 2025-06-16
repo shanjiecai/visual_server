@@ -1,6 +1,7 @@
 from aiokafka import AIOKafkaProducer
 import asyncio
 
+
 async def produce():
     # 初始化生产者，注意 bootstrap_servers 要指向你的 Kafka 地址
     producer = AIOKafkaProducer(

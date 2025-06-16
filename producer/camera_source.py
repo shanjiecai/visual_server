@@ -100,7 +100,7 @@ class CameraVideoSource(BaseVideoSource):
                 logger.warning("Received empty frame from camera")
                 return None
             
-            # 构建帧数据
+            # 构建额外元数据
             additional_metadata = {
                 "camera_source": True,
                 "camera_index": self.camera_index,
@@ -110,6 +110,7 @@ class CameraVideoSource(BaseVideoSource):
                 "fps_setting": self.fps
             }
             
+            # 使用基类的通用方法创建FrameData
             return self._create_frame_data(frame, additional_metadata)
             
         except Exception as e:
@@ -153,37 +154,3 @@ class CameraVideoSource(BaseVideoSource):
             "fps": self._camera.get(cv2.CAP_PROP_FPS),
             "backend": self._camera.getBackendName()
         }
-    
-    def _create_frame_data(self, frame, additional_metadata: Dict[str, Any] = None) -> FrameData:
-        """创建帧数据对象
-        
-        Args:
-            frame: OpenCV格式的图像帧
-            additional_metadata: 额外元数据
-            
-        Returns:
-            FrameData: 帧数据对象
-        """
-        # 生成帧ID - 使用时间戳和摄像头ID的组合
-        frame_id = f"cam{self.camera_index}_{time.time():.6f}"
-        timestamp = time.time()
-        
-        # 基础元数据
-        metadata = {
-            "source_id": self.source_id,
-            "camera_index": self.camera_index,
-            "frame_count": self._frame_count,
-            "resolution": self.resolution
-        }
-        
-        # 添加额外元数据
-        if additional_metadata:
-            metadata.update(additional_metadata)
-            
-        # 创建并返回帧数据对象
-        return FrameData(
-            frame_id=frame_id,
-            timestamp=timestamp,
-            raw_data=frame,
-            metadata=metadata
-        )

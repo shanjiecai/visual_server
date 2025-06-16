@@ -318,7 +318,7 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
         def shorten_url(url):
             if url.startswith("data:image"):
                 # 只保留前后20位
-                return url[:30] + "...(base64省略)..." + url[-20:]
+                return url[:20] + "...(base64省略)..." + url[-20:]
             return url
 
         def process_content(content):

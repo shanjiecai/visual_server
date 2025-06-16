@@ -212,6 +212,7 @@ class WebRTCVideoSource(BaseVideoSource):
                         "data_type": "numpy_array"
                     }
 
+                    # 使用基类的通用方法创建FrameData
                     return self._create_frame_data(frame_data, additional_metadata)
 
                 except queue.Empty:
@@ -262,36 +263,3 @@ class WebRTCVideoSource(BaseVideoSource):
 
         base_stats.update(webrtc_stats)
         return base_stats
-
-    def _create_frame_data(self, frame_data: Dict[str, Any], additional_metadata: Dict[str, Any] = None) -> FrameData:
-        """创建帧数据对象
-
-        Args:
-            frame_data: 帧数据字典
-            additional_metadata: 额外元数据
-
-        Returns:
-            FrameData: 帧数据对象
-        """
-        # 生成帧ID
-        frame_id = f"{self.source_id}_{self._frame_count}_{time.time():.6f}"
-        timestamp = time.time()
-
-        # 基础元数据
-        metadata = {
-            "source_id": self.source_id,
-            "frame_count": self._frame_count,
-            "url": self.url
-        }
-
-        # 添加额外元数据
-        if additional_metadata:
-            metadata.update(additional_metadata)
-
-        # 创建并返回帧数据对象
-        return FrameData(
-            frame_id=frame_id,
-            timestamp=timestamp,
-            raw_data=frame_data,
-            metadata=metadata
-        )

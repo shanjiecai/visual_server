@@ -7,10 +7,10 @@ import asyncio
 #         bootstrap_servers='localhost:9092',  # 如果从宿主机访问，用 localhost:9092
 #         # 如果从其他容器访问，用 kafka:29092 (对应 docker-compose 中的服务名)
 #     )
-    
+
 #     # 启动生产者
 #     await producer.start()
-    
+
 #     try:
 #         # 发送消息
 #         for i in range(5):
@@ -29,9 +29,9 @@ import asyncio
 # asyncio.run(produce())
 
 
-
 from aiokafka import AIOKafkaConsumer
 import asyncio
+
 
 async def consume_messages():
     consumer = AIOKafkaConsumer(
@@ -40,13 +40,14 @@ async def consume_messages():
         group_id="my-group",
         auto_offset_reset='earliest'  # 从最早的消息开始消费
     )
-    
+
     await consumer.start()
-    
+
     try:
         async for msg in consumer:
             print(f"Received: {msg.value.decode('utf-8')}")
     finally:
         await consumer.stop()
+
 
 asyncio.run(consume_messages())

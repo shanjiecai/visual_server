@@ -10,7 +10,8 @@ import asyncio
 import time
 from loguru import logger
 from abc import ABC, abstractmethod
-from typing import Dict, Any, AsyncGenerator, Optional
+from typing import Dict, Any, AsyncGenerator, Optional, Union
+import numpy as np
 
 from core.interfaces import IVideoSource, FrameData
 
@@ -86,6 +87,60 @@ class BaseVideoSource(IVideoSource):
     async def _get_next_frame(self) -> Optional[FrameData]:
         """获取下一帧"""
         pass
+    
+    def _create_frame_data(self, 
+                          raw_data: Union[np.ndarray, Dict[str, Any]], 
+                          additional_metadata: Optional[Dict[str, Any]] = None) -> FrameData:
+        """创建帧数据对象
+        
+        Args:
+            raw_data: 原始帧数据，可以是numpy数组或包含帧信息的字典
+            additional_metadata: 额外的元数据
+            
+        Returns:
+            FrameData: 帧数据对象
+        """
+        # 生成帧ID
+        frame_id = f"{self.source_id}_{self._frame_count}_{time.time():.6f}"
+        timestamp = time.time()
+        
+        # 基础元数据
+        metadata = {
+            "source_id": self.source_id,
+            "frame_count": self._frame_count,
+            "source_type": self.__class__.__name__,
+            "fps": self.fps,
+            "capture_timestamp": timestamp,
+        }
+        
+        # 如果raw_data是numpy数组，转换为标准字典格式
+        if isinstance(raw_data, np.ndarray):
+            height, width = raw_data.shape[:2]
+            channels = raw_data.shape[2] if len(raw_data.shape) > 2 else 1
+            
+            frame_dict = {
+                "width": width,
+                "height": height,
+                "channels": channels,
+                "data": raw_data,
+                "format": "numpy_array",
+                "dtype": str(raw_data.dtype)
+            }
+        else:
+            # raw_data已经是字典格式
+            frame_dict = raw_data
+        
+        # 添加额外元数据
+        if additional_metadata:
+            metadata.update(additional_metadata)
+        
+        # 创建并返回帧数据对象
+        return FrameData(
+            frame_id=frame_id,
+            timestamp=timestamp,
+            raw_data=frame_dict,
+            metadata=metadata
+        )
     
     async def close(self) -> None:
         """关闭视频源"""

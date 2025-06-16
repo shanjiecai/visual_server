@@ -7,7 +7,7 @@
 - **异步架构**: 基于asyncio的高性能异步处理
 - **模块化设计**: 面向接口编程，支持插件化扩展
 - **多种视频源**: 支持文件、摄像头、RTMP流、WebRTC等多种视频输入
-- **智能预处理**: 内置YOLO检测、相似帧过滤等预处理器
+- **智能预处理**: YOLO检测、相似帧过滤等预处理器
 - **大模型集成**: 支持OpenAI、自定义大模型等多种AI服务
 - **消息队列**: 支持Kafka等消息队列系统
 - **后处理器**: 对话发起、通知发送等智能后处理
@@ -74,30 +74,10 @@ visual_server/
 └── requirements.txt        # 依赖清单
 ```
 
-## 🚀 快速开始
-
-### 环境要求
-
-- Python 3.8+
-- 推荐使用虚拟环境
-
-### 安装依赖
-
-```bash
-# 克隆项目
-git clone <repository-url>
-cd visual_server
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
-
-# 安装依赖
-pip install -r requirements.txt
-```
-
 ### 基础配置
+
+cp config.yaml.example config.yaml
+cp worker/vlm_worker_config.simple.yaml.example worker/vlm_worker_config.yaml
 
 编辑配置文件 `config.yaml`：
 
@@ -130,7 +110,7 @@ queue:
 
 有多种方式启动系统：
 
-#### 方式1：使用主入口文件（推荐）
+#### 方式1：使用主入口文件
 ```bash
 # 只运行演示程序（摄像头处理）
 python main.py demo
@@ -145,7 +125,7 @@ python main.py both
 python main.py demo --config my_config.yaml
 ```
 
-#### 方式2：分别启动
+#### 方式2：分别启动（推荐）
 ```bash
 # 启动主处理程序
 python demo.py

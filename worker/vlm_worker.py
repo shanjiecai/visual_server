@@ -110,6 +110,8 @@ class VLMWorker:
             # 记录接收到的消息
             frame_id = message.get("frame_id") or message.get("data", {}).get("frame_id")
             logger.info(f"Received message with frame_id: {frame_id}")
+            formatted_msg = self._format_message_for_log(message)
+            logger.info(f"Message content: {formatted_msg}")
             
             # 检查必要的字段
             if not self._validate_message(message):
@@ -244,6 +246,67 @@ class VLMWorker:
         except Exception as e:
             logger.error(f"Failed to create postprocessor {name}: {e}")
             return None
+        
+    def _format_message_for_log(self, message, max_len=60):
+        """格式化消息用于日志输出，递归处理嵌套结构"""
+        
+        # 需要简化的字段名称（支持嵌套路径）
+        sensitive_fields = {
+            "image_base64", "images_base64", "image_data", "base64_image",
+            "raw_data", "encoded_image", "photo_data"
+        }
+        
+        def shorten_value(key, value, path=""):
+            """递归简化值，支持嵌套路径检查"""
+            current_path = f"{path}.{key}" if path else key
+            
+            # 检查当前字段是否是敏感字段
+            is_sensitive = key in sensitive_fields or any(
+                field in current_path for field in sensitive_fields
+            )
+            
+            if isinstance(value, str):
+                # 字符串类型：如果是敏感字段或长度超限，则简化
+                if is_sensitive or len(value) > max_len:
+                    return f"<{type(value).__name__}:{len(value)} chars>"
+                return value
+                
+            elif isinstance(value, dict):
+                # 字典类型：递归处理每个键值对
+                return {
+                    k: shorten_value(k, v, current_path) 
+                    for k, v in value.items()
+                }
+                
+            elif isinstance(value, list):
+                # 列表类型：递归处理每个元素
+                if is_sensitive:
+                    # 敏感字段的列表，显示概要信息
+                    return f"<list:{len(value)} items>"
+                return [
+                    shorten_value(f"[{i}]", item, current_path) 
+                    for i, item in enumerate(value)
+                ]
+                
+            elif isinstance(value, bytes):
+                # 字节类型：显示长度信息
+                return f"<bytes:{len(value)} bytes>"
+                
+            elif hasattr(value, '__dict__'):
+                # 对象类型：显示类型和主要属性
+                return f"<{type(value).__name__} object>"
+                
+            else:
+                # 其他类型：直接返回
+                return value
+        
+        # 处理输入消息
+        if isinstance(message, dict):
+            return {k: shorten_value(k, v) for k, v in message.items()}
+        elif isinstance(message, list):
+            return [shorten_value(f"[{i}]", item) for i, item in enumerate(message)]
+        else:
+            return shorten_value("value", message)
 
 
 async def run_worker(config_path: str = None):

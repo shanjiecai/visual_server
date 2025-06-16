@@ -17,6 +17,7 @@ from .interfaces import (
     IResultAggregator, ICache, IConfigManager, IServiceRegistry,
     IMetricsCollector
 )
+from utils.config import config_manager
 
 
 class IComponentFactory(ABC):
@@ -157,8 +158,7 @@ class PluginLoader:
 class ServiceFactory:
     """服务工厂主类，管理所有类型的工厂"""
 
-    def __init__(self, config_manager: IConfigManager):
-        self._config_manager = config_manager
+    def __init__(self):
         self._plugin_loader = PluginLoader()
 
         # 初始化各类型工厂
@@ -180,7 +180,7 @@ class ServiceFactory:
             self._register_builtin_components()
 
             # 加载插件组件
-            plugins_config = self._config_manager.get("plugins", {})
+            plugins_config = config_manager.get("plugins", {})
             if plugins_config:
                 self._load_plugin_components(plugins_config)
 
@@ -204,39 +204,49 @@ class ServiceFactory:
             video_factory.register_component("webrtc", WebRTCVideoSource)
 
         except ImportError as e:
-            logger.warning(f"Failed to import video source components: {e}")
+            logger.warning(f"Some video source components not available: {e}")
 
         # 注册预处理器
         try:
-            from preprocessor.memory_extractor import MemoryExtractorProcessor
             from preprocessor.yolo_detector import YOLODetectorProcessor
-            from preprocessor.mask2former import Mask2FormerProcessor
             from preprocessor.similar_frame_filter import SimilarFrameFilterProcessor
+            from preprocessor.memory_extractor import MemoryExtractorProcessor
 
             preprocessor_factory = self._factories["preprocessor"]
-            preprocessor_factory.register_component("memory_extractor", MemoryExtractorProcessor)
             preprocessor_factory.register_component("yolo_detector", YOLODetectorProcessor)
-            preprocessor_factory.register_component("mask2former", Mask2FormerProcessor)
             preprocessor_factory.register_component("similar_frame_filter", SimilarFrameFilterProcessor)
+            preprocessor_factory.register_component("memory_extractor", MemoryExtractorProcessor)
 
         except ImportError as e:
-            logger.warning(f"Failed to import preprocessor components: {e}")
+            logger.warning(f"Some preprocessor components not available: {e}")
 
-        # 注册队列
+        # 注册后处理器
+        try:
+            from postprocessor.dialogue_initiator import DialogueInitiatorPostprocessor
+            from postprocessor.notification_sender import NotificationPostprocessor
+            from postprocessor.greeting_printer import GreetingPrinterPostprocessor
+
+            postprocessor_factory = self._factories["postprocessor"]
+            postprocessor_factory.register_component("dialogue_initiator", DialogueInitiatorPostprocessor)
+            postprocessor_factory.register_component("notification_sender", NotificationPostprocessor)
+            postprocessor_factory.register_component("greeting_printer", GreetingPrinterPostprocessor)
+
+        except ImportError as e:
+            logger.warning(f"Some postprocessor components not available: {e}")
+
+        # 注册消息队列
         try:
             from message_queue.memory_queue import InMemoryQueue
-            from message_queue.rabbitmq_queue import RabbitMQQueue
             from message_queue.kafka_queue import KafkaQueue
 
             queue_factory = self._factories["queue"]
             queue_factory.register_component("memory", InMemoryQueue)
-            queue_factory.register_component("rabbitmq", RabbitMQQueue)
             queue_factory.register_component("kafka", KafkaQueue)
 
         except ImportError as e:
-            logger.warning(f"Failed to import queue components: {e}")
+            logger.warning(f"Some queue components not available: {e}")
 
-        # 注册大模型处理器
+        # 注册LLM处理器
         try:
             from consumer.openai_vlm import OpenAIVLMProcessor
 
@@ -244,42 +254,30 @@ class ServiceFactory:
             llm_factory.register_component("openai_vlm", OpenAIVLMProcessor)
 
         except ImportError as e:
-            logger.warning(f"Failed to import LLM processor components: {e}")
+            logger.warning(f"Some LLM processor components not available: {e}")
 
-        # 注册后处理器
+        # 注册缓存组件
         try:
-            from postprocessor.dialogue_initiator import DialogueInitiatorPostprocessor
-            from postprocessor.notification_sender import NotificationPostprocessor
-
-            postprocessor_factory = self._factories["postprocessor"]
-            postprocessor_factory.register_component("dialogue_initiator", DialogueInitiatorPostprocessor)
-            postprocessor_factory.register_component("notification_sender", NotificationPostprocessor)
-
-        except ImportError as e:
-            logger.warning(f"Failed to import postprocessor components: {e}")
-
-        # 注册缓存
-        try:
-            # from utils.cache import InMemoryCache, LRUCache, FrameCache
+            from utils.cache import InMemoryCache
 
             generic_factory = self._factories["generic"]
-            # generic_factory.register_component("memory_cache", InMemoryCache)
-            # generic_factory.register_component("lru_cache", LRUCache)
-            # generic_factory.register_component("frame_cache", FrameCache)
+            generic_factory.register_component("cache", InMemoryCache)
 
         except ImportError as e:
-            logger.warning(f"Failed to import cache components: {e}")
-
-        logger.info("Built-in components registered successfully")
+            logger.warning(f"Cache components not available: {e}")
 
     def _load_plugin_components(self, plugins_config: Dict[str, Any]) -> None:
         """加载插件组件"""
-        for factory_type, factory in self._factories.items():
-            factory_plugins = plugins_config.get(factory_type, {})
-            loaded_plugins = self._plugin_loader.load_plugins_from_config(factory_plugins)
-
+        try:
+            loaded_plugins = self._plugin_loader.load_plugins_from_config(plugins_config)
+            
             for plugin_name, plugin_class in loaded_plugins.items():
-                factory.register_component(plugin_name, plugin_class)
+                # 根据插件类型注册到相应工厂
+                # 这里可以根据需要扩展插件分类逻辑
+                self._factories["generic"].register_component(plugin_name, plugin_class)
+                
+        except Exception as e:
+            logger.error(f"Error loading plugin components: {e}")
 
     def get_factory(self, factory_type: str) -> ComponentFactory:
         """获取指定类型的工厂"""
@@ -293,16 +291,17 @@ class ServiceFactory:
         return factory.create(component_type, config)
 
     def register_component(self, factory_type: str, component_type: str, component_class: Type) -> None:
-        """注册组件到指定工厂"""
+        """注册组件类"""
         factory = self.get_factory(factory_type)
         factory.register_component(component_type, component_class)
 
     def get_available_components(self, factory_type: Optional[str] = None) -> Dict[str, Dict[str, Type]]:
         """获取可用组件列表"""
         if factory_type:
-            return {factory_type: self.get_factory(factory_type).get_available_components()}
-
+            factory = self.get_factory(factory_type)
+            return {factory_type: factory.get_available_components()}
+        
         return {
-            factory_type: factory.get_available_components()
-            for factory_type, factory in self._factories.items()
+            name: factory.get_available_components()
+            for name, factory in self._factories.items()
         }

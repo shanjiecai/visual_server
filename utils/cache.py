@@ -3,20 +3,17 @@
 
 """
 缓存模块
-提供各种缓存实现，包括内存缓存、LRU缓存等
+提供内存缓存实现
 """
 
 import asyncio
 import time
+import json
 from loguru import logger
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
-from collections import OrderedDict
-import json
-import hashlib
-from dataclasses import asdict
+from typing import Any, Dict, Optional, Tuple
 
-from core.interfaces import ICache, FrameData, ProcessingResult
+from core.interfaces import ICache
 
 
 class BaseCache(ICache):
@@ -167,21 +164,20 @@ class BaseCache(ICache):
             "deletes": self._stats["deletes"],
             "hit_rate": hit_rate,
             "total_requests": total_requests,
-            "is_initialized": self._is_initialized,
         }
 
 
 class InMemoryCache(BaseCache):
     """内存缓存实现"""
     
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
+    def __init__(self, config: Dict[str, Any] = None):
+        super().__init__(config or {})
         self._cache: Dict[str, Tuple[Any, float]] = {}  # (value, expire_time)
         self._access_times: Dict[str, float] = {}  # 用于LRU
         self._lock = asyncio.Lock()
         
         # 配置参数
-        self.cleanup_interval = config.get("cleanup_interval", 300)  # 5分钟
+        self.cleanup_interval = self.config.get("cleanup_interval", 300)  # 5分钟
         self._cleanup_task = None
     
     async def _do_initialize(self) -> bool:
@@ -193,11 +189,11 @@ class InMemoryCache(BaseCache):
             # 启动清理任务
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
             
-            self._logger.info(f"In-memory cache initialized with max size: {self.max_size}")
+            logger.info(f"In-memory cache initialized with max size: {self.max_size}")
             return True
             
         except Exception as e:
-            self._logger.error(f"Failed to initialize in-memory cache: {e}")
+            logger.error(f"Failed to initialize in-memory cache: {e}")
             return False
     
     async def _do_get(self, key: str) -> Optional[Any]:
@@ -234,7 +230,7 @@ class InMemoryCache(BaseCache):
                 return True
                 
             except Exception as e:
-                self._logger.error(f"Error setting value in memory cache: {e}")
+                logger.error(f"Error setting value in memory cache: {e}")
                 return False
     
     async def _do_delete(self, key: str) -> bool:
@@ -265,7 +261,7 @@ class InMemoryCache(BaseCache):
         self._cache.pop(lru_key, None)
         self._access_times.pop(lru_key, None)
         
-        self._logger.debug(f"Evicted LRU item with key: {lru_key}")
+        logger.debug(f"Evicted LRU item with key: {lru_key}")
     
     async def _cleanup_loop(self) -> None:
         """定期清理过期项目"""
@@ -274,9 +270,9 @@ class InMemoryCache(BaseCache):
                 await asyncio.sleep(self.cleanup_interval)
                 await self._cleanup_expired()
         except asyncio.CancelledError:
-            self._logger.info("Cache cleanup task cancelled")
+            logger.info("Cache cleanup task cancelled")
         except Exception as e:
-            self._logger.error(f"Error in cache cleanup loop: {e}")
+            logger.error(f"Error in cache cleanup loop: {e}")
     
     async def _cleanup_expired(self) -> None:
         """清理过期的缓存项目"""
@@ -294,7 +290,7 @@ class InMemoryCache(BaseCache):
                 self._access_times.pop(key, None)
             
             if expired_keys:
-                self._logger.debug(f"Cleaned up {len(expired_keys)} expired cache items")
+                logger.debug(f"Cleaned up {len(expired_keys)} expired cache items")
     
     def size(self) -> int:
         """获取缓存大小"""
@@ -310,245 +306,4 @@ class InMemoryCache(BaseCache):
                 pass
         
         await self._do_clear()
-        self._logger.info("In-memory cache closed")
-
-
-class LRUCache(BaseCache):
-    """LRU缓存实现"""
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self._cache = OrderedDict()
-        self._expire_times: Dict[str, float] = {}
-        self._lock = asyncio.Lock()
-    
-    async def _do_initialize(self) -> bool:
-        """初始化LRU缓存"""
-        try:
-            self._cache.clear()
-            self._expire_times.clear()
-            
-            self._logger.info(f"LRU cache initialized with max size: {self.max_size}")
-            return True
-            
-        except Exception as e:
-            self._logger.error(f"Failed to initialize LRU cache: {e}")
-            return False
-    
-    async def _do_get(self, key: str) -> Optional[Any]:
-        """从LRU缓存获取值"""
-        async with self._lock:
-            if key not in self._cache:
-                return None
-            
-            # 检查是否过期
-            if key in self._expire_times and self._expire_times[key] < time.time():
-                del self._cache[key]
-                del self._expire_times[key]
-                return None
-            
-            # 移动到末尾（最近使用）
-            value = self._cache.pop(key)
-            self._cache[key] = value
-            
-            return value
-    
-    async def _do_set(self, key: str, value: Any, ttl: int) -> bool:
-        """向LRU缓存设置值"""
-        async with self._lock:
-            try:
-                # 如果键已存在，更新值
-                if key in self._cache:
-                    self._cache.pop(key)
-                
-                # 检查大小限制
-                while len(self._cache) >= self.max_size:
-                    # 移除最老的项目
-                    oldest_key = next(iter(self._cache))
-                    del self._cache[oldest_key]
-                    self._expire_times.pop(oldest_key, None)
-                
-                # 添加新项目
-                self._cache[key] = value
-                self._expire_times[key] = time.time() + ttl
-                
-                return True
-                
-            except Exception as e:
-                self._logger.error(f"Error setting value in LRU cache: {e}")
-                return False
-    
-    async def _do_delete(self, key: str) -> bool:
-        """从LRU缓存删除值"""
-        async with self._lock:
-            if key in self._cache:
-                del self._cache[key]
-                self._expire_times.pop(key, None)
-                return True
-            return False
-    
-    async def _do_clear(self) -> bool:
-        """清空LRU缓存"""
-        async with self._lock:
-            self._cache.clear()
-            self._expire_times.clear()
-            return True
-    
-    def size(self) -> int:
-        """获取缓存大小"""
-        return len(self._cache)
-
-
-class FrameCache(BaseCache):
-    """视频帧专用缓存"""
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self._frame_cache: Dict[str, Tuple[FrameData, float]] = {}
-        self._result_cache: Dict[str, Tuple[List[ProcessingResult], float]] = {}
-        self._lock = asyncio.Lock()
-        
-        # 配置参数
-        self.frame_ttl = config.get("frame_ttl", 1800)  # 30分钟
-        self.result_ttl = config.get("result_ttl", 3600)  # 1小时
-        self.max_frame_size = config.get("max_frame_size", 500)
-        self.max_result_size = config.get("max_result_size", 1000)
-    
-    async def _do_initialize(self) -> bool:
-        """初始化帧缓存"""
-        try:
-            self._frame_cache.clear()
-            self._result_cache.clear()
-            
-            self._logger.info(f"Frame cache initialized (frames: {self.max_frame_size}, results: {self.max_result_size})")
-            return True
-            
-        except Exception as e:
-            self._logger.error(f"Failed to initialize frame cache: {e}")
-            return False
-    
-    async def cache_frame(self, frame_data: FrameData) -> bool:
-        """缓存视频帧"""
-        key = self._generate_frame_key(frame_data)
-        return await self.set(key, frame_data, self.frame_ttl)
-    
-    async def get_cached_frame(self, frame_id: str) -> Optional[FrameData]:
-        """获取缓存的视频帧"""
-        key = f"frame:{frame_id}"
-        return await self.get(key)
-    
-    async def cache_processing_results(self, frame_id: str, results: List[ProcessingResult]) -> bool:
-        """缓存处理结果"""
-        key = f"results:{frame_id}"
-        return await self.set(key, results, self.result_ttl)
-    
-    async def get_cached_results(self, frame_id: str) -> Optional[List[ProcessingResult]]:
-        """获取缓存的处理结果"""
-        key = f"results:{frame_id}"
-        return await self.get(key)
-    
-    async def cache_similar_frame_hash(self, frame_data: FrameData, frame_hash: str) -> bool:
-        """缓存相似帧的哈希值"""
-        key = f"hash:{frame_data.frame_id}"
-        return await self.set(key, frame_hash, self.frame_ttl)
-    
-    async def get_similar_frame_hash(self, frame_id: str) -> Optional[str]:
-        """获取相似帧的哈希值"""
-        key = f"hash:{frame_id}"
-        return await self.get(key)
-    
-    def _generate_frame_key(self, frame_data: FrameData) -> str:
-        """生成帧缓存键"""
-        return f"frame:{frame_data.frame_id}"
-    
-    async def _do_get(self, key: str) -> Optional[Any]:
-        """获取缓存值的实现"""
-        async with self._lock:
-            # 检查帧缓存
-            if key.startswith("frame:") and key in self._frame_cache:
-                frame_data, expire_time = self._frame_cache[key]
-                if expire_time > time.time():
-                    return frame_data
-                else:
-                    del self._frame_cache[key]
-            
-            # 检查结果缓存
-            elif key.startswith("results:") and key in self._result_cache:
-                results, expire_time = self._result_cache[key]
-                if expire_time > time.time():
-                    return results
-                else:
-                    del self._result_cache[key]
-            
-            return None
-    
-    async def _do_set(self, key: str, value: Any, ttl: int) -> bool:
-        """设置缓存值的实现"""
-        async with self._lock:
-            try:
-                expire_time = time.time() + ttl
-                
-                if key.startswith("frame:"):
-                    # 检查帧缓存大小
-                    while len(self._frame_cache) >= self.max_frame_size:
-                        oldest_key = min(self._frame_cache.keys(), 
-                                       key=lambda k: self._frame_cache[k][1])
-                        del self._frame_cache[oldest_key]
-                    
-                    self._frame_cache[key] = (value, expire_time)
-                
-                elif key.startswith("results:"):
-                    # 检查结果缓存大小
-                    while len(self._result_cache) >= self.max_result_size:
-                        oldest_key = min(self._result_cache.keys(),
-                                       key=lambda k: self._result_cache[k][1])
-                        del self._result_cache[oldest_key]
-                    
-                    self._result_cache[key] = (value, expire_time)
-                
-                return True
-                
-            except Exception as e:
-                self._logger.error(f"Error setting frame cache value: {e}")
-                return False
-    
-    async def _do_delete(self, key: str) -> bool:
-        """删除缓存值的实现"""
-        async with self._lock:
-            deleted = False
-            
-            if key in self._frame_cache:
-                del self._frame_cache[key]
-                deleted = True
-            
-            if key in self._result_cache:
-                del self._result_cache[key]
-                deleted = True
-            
-            return deleted
-    
-    async def _do_clear(self) -> bool:
-        """清空缓存的实现"""
-        async with self._lock:
-            self._frame_cache.clear()
-            self._result_cache.clear()
-            return True
-    
-    def size(self) -> int:
-        """获取缓存大小"""
-        return len(self._frame_cache) + len(self._result_cache)
-    
-    def get_detailed_statistics(self) -> Dict[str, Any]:
-        """获取详细的缓存统计信息"""
-        base_stats = self.get_statistics()
-        
-        base_stats.update({
-            "frame_cache_size": len(self._frame_cache),
-            "result_cache_size": len(self._result_cache),
-            "max_frame_size": self.max_frame_size,
-            "max_result_size": self.max_result_size,
-            "frame_ttl": self.frame_ttl,
-            "result_ttl": self.result_ttl,
-        })
-        
-        return base_stats 
+        logger.info("In-memory cache closed") 
