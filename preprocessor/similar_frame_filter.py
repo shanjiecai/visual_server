@@ -52,6 +52,9 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
             # 最小时间间隔（秒），避免过于频繁的帧
             self.min_time_interval = self.config.get("min_time_interval", 0.5)
             
+            # 是否用最新的相似帧替换历史帧中最相似的帧（True=替换，False=不替换）
+            self.replace_similar_frame = self.config.get("replace_similar_frame", True)
+            
             # 初始化历史帧存储
             self._frame_history = []
             self._last_processed_time = 0
@@ -72,7 +75,7 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
                     logger.warning("CLIP模型加载失败，将使用直方图方法作为备选")
                     self.comparison_method = "histogram"
             
-            logger.info(f"Similar frame filter initialized: method={self.comparison_method}, threshold={self.similarity_threshold}")
+            logger.info(f"Similar frame filter initialized: method={self.comparison_method}, threshold={self.similarity_threshold}, replace_similar={self.replace_similar_frame}")
             return True
             
         except Exception as e:
@@ -130,39 +133,80 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
             # 判断是否应该跳过这一帧
             should_skip = self.skip_similar and similarity_result["is_similar"]
             
-            # 如果相似度过高，直接返回过滤结果，不进行后续处理
-            if should_skip:
-                logger.info(f"帧 {frame_data.frame_id} 因相似度过高被过滤 (相似度: {similarity_result['max_similarity']:.4f} > {self.similarity_threshold})")
-                return self._create_filtered_result(frame_data, "high_similarity", should_skip=True)
+            # 如果相似度过高，处理替换逻辑或过滤
+            if similarity_result["is_similar"]:
+                if self.replace_similar_frame and similarity_result["most_similar_index"] >= 0:
+                    # 用新帧替换历史帧中最相似的那个
+                    old_frame_id = self._frame_history[similarity_result["most_similar_index"]]["frame_id"]
+                    self._frame_history[similarity_result["most_similar_index"]] = {
+                        "frame_id": frame_data.frame_id,
+                        "timestamp": frame_data.timestamp,
+                        "image": image.copy(),
+                        "added_at": time.time(),
+                        "replaced_frame": old_frame_id  # 记录被替换的帧ID
+                    }
+                    self._last_processed_time = current_time
+                    logger.info(f"帧 {frame_data.frame_id} 替换了历史帧 {old_frame_id} (相似度: {similarity_result['max_similarity']:.4f})")
+                    
+                    # 创建替换结果
+                    result = self._create_result(
+                        frame_data,
+                        similarity_result,
+                        confidence=1.0 - similarity_result["max_similarity"],
+                        additional_metadata={
+                            "should_skip": False,
+                            "comparison_method": self.comparison_method,
+                            "history_size": len(self._frame_history),
+                            "processed_time": current_time,
+                            "action": "replaced",
+                            "replaced_frame_id": old_frame_id,
+                            "replaced_at_index": similarity_result["most_similar_index"]
+                        }
+                    )
+                    
+                    logger.debug(f"相似帧替换结果摘要 - 帧 {frame_data.frame_id}:")
+                    logger.debug(f"  - 替换的历史帧: {old_frame_id}")
+                    logger.debug(f"  - 相似度: {similarity_result['max_similarity']:.4f}")
+                    logger.debug(f"  - 历史帧数: {len(self._frame_history)}")
+                    
+                    return result
+                
+                elif should_skip:
+                    # 如果不替换且设置了跳过相似帧，则过滤
+                    logger.info(f"帧 {frame_data.frame_id} 因相似度过高被过滤 (相似度: {similarity_result['max_similarity']:.4f} > {self.similarity_threshold})")
+                    return self._create_filtered_result(frame_data, "high_similarity", should_skip=True)
             
-            # 如果不跳过，更新历史帧
-            self._update_frame_history(image, frame_data)
-            self._last_processed_time = current_time
-            logger.info(f"帧 {frame_data.frame_id} 添加到历史帧 (当前历史帧数: {len(self._frame_history)})")
-            
-            # 创建处理结果
-            result = self._create_result(
-                frame_data,
-                similarity_result,
-                confidence=1.0 - similarity_result["max_similarity"],  # 越不相似置信度越高
-                additional_metadata={
-                    "should_skip": False,  # 不跳过
-                    "comparison_method": self.comparison_method,
-                    "history_size": len(self._frame_history),
-                    "processed_time": current_time
-                }
-            )
-            
-            # 打印总结信息
-            logger.debug(f"相似度处理结果摘要 - 帧 {frame_data.frame_id}:")
-            logger.debug(f"  - 方法: {self.comparison_method}")
-            logger.debug(f"  - 最大相似度: {similarity_result['max_similarity']:.4f} (阈值: {self.similarity_threshold})")
-            logger.debug(f"  - 是否相似: {similarity_result['is_similar']}")
-            logger.debug(f"  - 是否跳过: False")
-            logger.debug(f"  - 置信度: {1.0 - similarity_result['max_similarity']:.4f}")
-            logger.debug(f"  - 历史帧数: {len(self._frame_history)}")
-            
-            return result
+            # 如果不相似或相似但不跳过，更新历史帧
+            if not similarity_result["is_similar"] or not should_skip:
+                self._update_frame_history(image, frame_data)
+                self._last_processed_time = current_time
+                action = "added_new" if not similarity_result["is_similar"] else "added_similar"
+                logger.info(f"帧 {frame_data.frame_id} 添加到历史帧 (当前历史帧数: {len(self._frame_history)}, 动作: {action})")
+                
+                # 创建处理结果
+                result = self._create_result(
+                    frame_data,
+                    similarity_result,
+                    confidence=1.0 - similarity_result["max_similarity"],  # 越不相似置信度越高
+                    additional_metadata={
+                        "should_skip": False,  # 不跳过
+                        "comparison_method": self.comparison_method,
+                        "history_size": len(self._frame_history),
+                        "processed_time": current_time,
+                        "action": action
+                    }
+                )
+                
+                # 打印总结信息
+                logger.debug(f"相似度处理结果摘要 - 帧 {frame_data.frame_id}:")
+                logger.debug(f"  - 方法: {self.comparison_method}")
+                logger.debug(f"  - 最大相似度: {similarity_result['max_similarity']:.4f} (阈值: {self.similarity_threshold})")
+                logger.debug(f"  - 是否相似: {similarity_result['is_similar']}")
+                logger.debug(f"  - 处理动作: {action}")
+                logger.debug(f"  - 置信度: {1.0 - similarity_result['max_similarity']:.4f}")
+                logger.debug(f"  - 历史帧数: {len(self._frame_history)}")
+                
+                return result
             
         except Exception as e:
             logger.error(f"帧 {frame_data.frame_id} 相似度过滤失败: {e}")
@@ -206,6 +250,7 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
                 "is_similar": False,
                 "max_similarity": 0.0,
                 "similarities": [],
+                "most_similar_index": -1,
                 "reason": "first_frame"
             }
         
@@ -213,12 +258,16 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
         similarities = await self._run_in_thread(self._compute_similarities, current_image)
         
         max_similarity = max(similarities) if similarities else 0.0
+        most_similar_index = similarities.index(max_similarity) if similarities else -1
         is_similar = max_similarity > self.similarity_threshold
         
         # 添加详细日志打印相似度结果
         logger.info(f"帧 {frame_data.frame_id} 相似度计算结果:")
         logger.info(f"  - 最大相似度: {max_similarity:.4f} (阈值: {self.similarity_threshold})")
         logger.info(f"  - 是否相似: {is_similar}")
+        logger.info(f"  - 最相似的历史帧索引: {most_similar_index}")
+        if most_similar_index >= 0:
+            logger.info(f"  - 最相似的历史帧ID: {self._frame_history[most_similar_index]['frame_id']}")
         logger.info(f"  - 比较方法: {self.comparison_method}")
         logger.info(f"  - 历史帧数量: {len(self._frame_history)}")
         
@@ -226,6 +275,7 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
             "is_similar": is_similar,
             "max_similarity": max_similarity,
             "similarities": similarities,
+            "most_similar_index": most_similar_index,
             "similarity_threshold": self.similarity_threshold,
             "comparison_method": self.comparison_method,
             "compared_frames": len(self._frame_history)
@@ -457,6 +507,7 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
             "history_size": len(self._frame_history),
             "max_history_size": self.history_size,
             "skip_similar": self.skip_similar,
+            "replace_similar_frame": self.replace_similar_frame,
             "min_time_interval": self.min_time_interval,
             "clip_model_loaded": self.clip_model is not None
         })

@@ -5,7 +5,7 @@ import sys
 from redis.asyncio import Redis
 from redis.exceptions import AuthenticationError, TimeoutError
 
-from common.log import log
+from common.log import logger
 from core.conf import settings
 
 
@@ -33,13 +33,13 @@ class RedisCli(Redis):
         try:
             await self.ping()
         except TimeoutError:
-            log.error('❌ 数据库 redis 连接超时')
+            logger.error('❌ 数据库 redis 连接超时')
             sys.exit()
         except AuthenticationError:
-            log.error('❌ 数据库 redis 连接认证失败')
+            logger.error('❌ 数据库 redis 连接认证失败')
             sys.exit()
         except Exception as e:
-            log.error('❌ 数据库 redis 连接异常 {}', e)
+            logger.error('❌ 数据库 redis 连接异常 {}', e)
             sys.exit()
 
     async def delete_prefix(self, prefix: str, exclude: str | list[str] | None = None) -> None:
