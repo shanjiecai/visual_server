@@ -1,0 +1,1 @@
+# Message queue module for video stream processing 

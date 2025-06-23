@@ -1,0 +1,36 @@
+# 简化版VLM工作进程配置 - 快速开始
+# 最小化配置，适合快速测试和开发
+
+worker:
+  worker_id: "vlm_worker_simple"
+  poll_interval: 1
+  batch_size: 1
+  max_retries: 3
+
+queue_config:
+  bootstrap_servers: ["localhost:9092"]
+  topic_name: "demo"
+  consumer_group: "vlm_workers"
+  use_kafka: false  # 使用内存队列，无需Kafka服务
+
+vlm_config:
+  # 使用阿里云通义千问VL（需要API密钥）
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "YOUR_API_KEY_HERE"  # 请替换为实际的API密钥
+  model_name: "qwen-vl-plus"
+  max_tokens: 256
+  temperature: 0.7
+  timeout: 30.0
+  
+  default_system_prompt: |
+    你是一个友好的AI助手，能够分析图像并用中文回答问题。
+    请保持回答简洁友好。
+
+logging:
+  level: "INFO"
+  file_path: "logs/vlm_worker.log"
+  console_output: true
+
+# 快速开始步骤：
+# 1. 将 YOUR_API_KEY_HERE 替换为你的阿里云API密钥
+# 2. 运行: python -m worker.vlm_worker --config worker/vlm_worker_config.simple.yaml 

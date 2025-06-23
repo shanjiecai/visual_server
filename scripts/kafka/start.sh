@@ -1,0 +1,1 @@
+docker compose -f kafka-group.yml up -d
