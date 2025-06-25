@@ -147,14 +147,14 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
                     }
                     self._last_processed_time = current_time
                     logger.info(f"帧 {frame_data.frame_id} 替换了历史帧 {old_frame_id} (相似度: {similarity_result['max_similarity']:.4f})")
-                    
+                    similarity_result["reason"] = "high_similarity"
                     # 创建替换结果
                     result = self._create_result(
                         frame_data,
                         similarity_result,
                         confidence=1.0 - similarity_result["max_similarity"],
                         additional_metadata={
-                            "should_skip": False,
+                            "should_skip": True,
                             "comparison_method": self.comparison_method,
                             "history_size": len(self._frame_history),
                             "processed_time": current_time,
@@ -262,14 +262,14 @@ class SimilarFrameFilterProcessor(BasePreprocessor):
         is_similar = max_similarity > self.similarity_threshold
         
         # 添加详细日志打印相似度结果
-        logger.info(f"帧 {frame_data.frame_id} 相似度计算结果:")
-        logger.info(f"  - 最大相似度: {max_similarity:.4f} (阈值: {self.similarity_threshold})")
-        logger.info(f"  - 是否相似: {is_similar}")
-        logger.info(f"  - 最相似的历史帧索引: {most_similar_index}")
+        logger.debug(f"帧 {frame_data.frame_id} 相似度计算结果:")
+        logger.debug(f"  - 最大相似度: {max_similarity:.4f} (阈值: {self.similarity_threshold})")
+        logger.debug(f"  - 是否相似: {is_similar}")
+        logger.debug(f"  - 最相似的历史帧索引: {most_similar_index}")
         if most_similar_index >= 0:
-            logger.info(f"  - 最相似的历史帧ID: {self._frame_history[most_similar_index]['frame_id']}")
-        logger.info(f"  - 比较方法: {self.comparison_method}")
-        logger.info(f"  - 历史帧数量: {len(self._frame_history)}")
+            logger.debug(f"  - 最相似的历史帧ID: {self._frame_history[most_similar_index]['frame_id']}")
+        logger.debug(f"  - 比较方法: {self.comparison_method}")
+        logger.debug(f"  - 历史帧数量: {len(self._frame_history)}")
         
         return {
             "is_similar": is_similar,

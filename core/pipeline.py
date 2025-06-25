@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional, Callable
 from loguru import logger
 
 from core.interfaces import FrameData, ProcessingResult, IPreprocessor, IMessageQueue, IVideoSource
+from utils.image_utils import image_to_base64
 
 
 class ProcessingPipeline:
@@ -52,20 +53,9 @@ class ProcessingPipeline:
             for processor in self._processors:
                 try:
                     logger.debug(f"使用 {processor.processor_name} 处理帧 {frame_data.frame_id}")
-                    
-                    if current_result is None:
-                        # 第一个处理器，直接处理原始帧
-                        current_result = await processor.process(frame_data)
-                    else:
-                        # 后续处理器，处理已处理过的帧
-                        # 创建新的帧数据，包含前一处理器的结果
-                        enhanced_frame = frame_data.copy_with_metadata({
-                            **frame_data.metadata,
-                            "previous_result": current_result.result_data,
-                            "previous_processor": current_result.processor_name
-                        })
-                        current_result = await processor.process(enhanced_frame)
-                    
+                    # 处理器之间不传递结果
+                    current_result = await processor.process(frame_data)
+
                     if current_result is None:
                         logger.warning(f"处理器 {processor.processor_name} 返回空结果，跳过后续处理")
                         return None
@@ -126,17 +116,21 @@ class ProcessingPipeline:
             "timestamp": result.timestamp,
             "processor_name": result.processor_name,
             "confidence": result.confidence,
+            "metadata": result.metadata,
             "pipeline_id": self.pipeline_id,
-            **result.result_data  # 包含所有结果数据
+            "image_base64": image_to_base64(result.frame_data.raw_data["data"]),
+            **result.result_data,  # 包含所有结果数据
         }
         
-        # 确保包含必要的字段
-        if "metadata" not in message:
-            message["metadata"] = result.metadata
-        
-        # 从pipeline配置中添加后处理器配置
+        # 添加独立的VLM任务配置和后处理器配置
         if self._postprocessor_config:
-            message["postprocessor_config"] = self._postprocessor_config
+            # 如果有vlm_task_config，直接传递
+            if "vlm_task_config" in self._postprocessor_config:
+                message["vlm_task_config"] = self._postprocessor_config["vlm_task_config"]
+            
+            # 添加后处理器配置
+            if "postprocessor_config" in self._postprocessor_config:
+                message["postprocessor_config"] = self._postprocessor_config["postprocessor_config"]
             
         return message
 

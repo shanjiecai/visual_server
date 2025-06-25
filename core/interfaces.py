@@ -46,6 +46,7 @@ class ProcessingResult:
     confidence: float
     metadata: Dict[str, Any]
     timestamp: float = 0.0  # 处理时间戳，默认为0.0
+    frame_data: Optional['FrameData'] = None  # 传递原始图片数据
 
 
 class ProcessingStatus(Enum):
@@ -135,8 +136,18 @@ class IPostprocessor(ABC):
     """后处理器接口"""
     
     @abstractmethod
+    async def initialize(self) -> bool:
+        """初始化后处理器"""
+        pass
+    
+    @abstractmethod
     async def execute(self, task: ProcessingTask) -> Dict[str, Any]:
         """执行后处理操作"""
+        pass
+    
+    @abstractmethod
+    async def cleanup(self) -> None:
+        """清理后处理器资源"""
         pass
 
 
@@ -328,14 +339,4 @@ class IMetricsCollector(ABC):
     @abstractmethod
     def get_metrics(self) -> Dict[str, Any]:
         """获取指标"""
-        pass
-
-
-class IPostProcessor(ABC):
-    @abstractmethod
-    async def initialize(self) -> bool:
-        pass
-
-    @abstractmethod
-    async def process(self, frame_data, aggregated_results):
         pass

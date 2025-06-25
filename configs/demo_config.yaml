@@ -1,0 +1,174 @@
+# 视频流处理服务配置文件
+
+# 服务配置
+service:
+  name: "video_stream_service"
+  version: "1.0.0"
+  host: "localhost"
+  port: 8080
+  worker_count: 4
+  max_queue_size: 100
+  health_check_interval: 30.0
+  metrics_collection_interval: 60.0
+
+# 摄像头配置
+camera:
+  camera_index: 0
+  fps: 1.0
+  resolution: [640, 480]
+
+# 相似帧过滤器配置
+similar_frame_filter:
+  similarity_threshold: 0.8
+  comparison_method: "clip"
+  clip_model_path: "models/clip-vit-base-patch32"
+  history_size: 5
+  min_time_interval: 0.5
+
+# 视频源配置
+video_source:
+  source_type: "camera"  # mock, file, camera, rtmp, webrtc
+  source_path: null    # 视频文件路径或摄像头设备ID
+  fps: 30.0
+  max_frames: null     # null表示无限制
+  loop: false          # 是否循环播放（仅对文件有效）
+  config:
+    # WebRTC配置
+    url: "http://112.13.96.171:1081/api/call/whep/get?src=1830004229212345670000034"
+    max_frames_buffer: 1
+    connection_timeout: 10
+    # 视频源特定配置
+    quality: "high"
+    buffer_size: 10
+
+# 预处理器配置
+preprocessors:
+  memory_extractor:
+    enabled: true
+    processor_type: "memory_extractor"
+    batch_size: 1
+    max_concurrent: 2
+    timeout: 30.0
+    config:
+      extraction_method: "feature_based"
+      memory_threshold: 0.7
+  
+  yolo_detector:
+    enabled: true
+    processor_type: "yolo_detector"
+    batch_size: 4
+    max_concurrent: 2
+    timeout: 15.0
+    model_path: "models/yoloe-v8l-seg.pt"
+    device: "cpu"
+    confidence_threshold: 0.5
+    nms_threshold: 0.4
+    target_classes: ["person"]  # 专注于人员检测
+    enable_downstream: true  # 启用下游处理
+  
+  similar_frame_filter:
+    enabled: true
+    processor_type: "similar_frame_filter"
+    batch_size: 1
+    max_concurrent: 4
+    timeout: 10.0
+    similarity_threshold: 0.8
+    comparison_method: "clip"
+    clip_model_path: "models/clip-vit-base-patch32"
+    history_size: 5
+    min_time_interval: 0.5
+
+# 队列配置
+queue:
+  type: "kafka"  # 使用Kafka队列
+  config:
+    bootstrap_servers: ["localhost:9092"]
+    topic_name: "demo"
+    consumer_group: "vlm_workers"
+    use_kafka: true
+    max_request_size: 10485760
+    timeout_default: 30.0
+    serialize_messages: true
+
+# VLM任务配置 - 独立于预处理器
+vlm_task_config:
+  person_detection:
+    task_type: "person_detection"
+    system_prompt: |
+      你是一个友好的智能助手，当检测到有人出现时，需要用温暖友好的语气向他们打招呼。
+      
+      请根据图像中人员的情况（人数、位置等），生成合适的问候语。
+      保持语气自然、友好、热情。
+    user_prompt: "你好！我看到有人出现在画面中，请向他们打个招呼吧。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 128
+    #   temperature: 0.8
+    #   base_url: "http://cc.komect.com/llm/vlgroup/"
+    #   api_key: "EMPTY"
+  
+  object_detection:
+    task_type: "object_detection"
+    system_prompt: |
+      你是一个专业的物体检测和场景分析专家。请分析图像中的物体和场景信息。
+      
+      请重点关注：
+      1. 物体的类型和位置
+      2. 物体的状态和条件
+      3. 场景的整体布局
+      4. 物体之间的关系
+    user_prompt: "请分析图像中的物体和场景，描述物体的类型、位置和相互关系。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 256
+    #   temperature: 0.3
+    #   base_url: "http://cc.komect.com/llm/vlgroup/"
+    #   api_key: "EMPTY"
+  
+  general_analysis:
+    task_type: "general_analysis"
+    system_prompt: |
+      你是一个专业的视觉分析专家。请对图像进行全面的分析和描述。
+      
+      请重点关注：
+      1. 场景的整体描述
+      2. 重要物体和人员
+      3. 环境和氛围
+      4. 值得注意的细节
+    user_prompt: "请对这张图像进行全面分析，描述你观察到的内容。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 512
+    #   temperature: 0.5
+    #   base_url: "http://cc.komect.com/llm/vlgroup/"
+    #   api_key: "EMPTY"
+
+# 缓存配置
+cache:
+  cache_type: "frame"  # memory, lru, frame
+  max_size: 1000
+  default_ttl: 3600  # 1小时
+  serialize_values: true
+  config:
+    frame_ttl: 1800     # 视频帧缓存30分钟
+    result_ttl: 3600    # 处理结果缓存1小时
+    max_frame_size: 500
+    max_result_size: 1000
+    cleanup_interval: 300
+
+# 后处理器配置
+postprocessors:
+  greeting_printer:
+    enabled: true
+    processor_type: "greeting_printer"
+    timeout: 5.0
+    max_retries: 1
+    trigger_conditions:
+      - type: "detection_threshold"
+        threshold: 1
+      - type: "task_type"
+        task_types: ["person_detection"]
+    greeting_config:
+      print_format: "🤖 AI打招呼: {content}"
+      include_metadata: true
+      show_person_count: true

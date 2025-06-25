@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 import json
 
+from loguru import logger
+
 from core.interfaces import ProcessingTask
 from postprocessor.base import BasePostProcessor
 
@@ -23,11 +25,11 @@ class DialogueInitiatorPostprocessor(BasePostProcessor):
             self.dialogue_templates = self.config.get("dialogue_templates", {})
             self.user_context = self.config.get("user_context", {})
 
-            self._logger.info("Dialogue initiator initialized")
+            logger.info("Dialogue initiator initialized")
             return True
 
         except Exception as e:
-            self._logger.error(f"Failed to initialize dialogue initiator: {e}")
+            logger.error(f"Failed to initialize dialogue initiator: {e}")
             return False
 
     async def _do_execute(self, task: ProcessingTask) -> Dict[str, Any]:
@@ -45,7 +47,6 @@ class DialogueInitiatorPostprocessor(BasePostProcessor):
 
                 return {
                     "task_id": task.task_id,
-                    "processor_name": self.processor_name,
                     "status": "completed",
                     "dialogue_type": dialogue_type,
                     "dialogue_content": dialogue_content,
@@ -54,7 +55,6 @@ class DialogueInitiatorPostprocessor(BasePostProcessor):
             else:
                 return {
                     "task_id": task.task_id,
-                    "processor_name": self.processor_name,
                     "status": "skipped",
                     "reason": "No dialogue trigger conditions met"
                 }

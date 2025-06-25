@@ -34,7 +34,6 @@ class Settings(BaseSettings):
     # REDIS_PORT: int
     # REDIS_PASSWORD: str
     # REDIS_DATABASE: int
-    #
 
     # FastAPI
     FASTAPI_API_V1_PATH: str = '/api/v1'
