@@ -3,16 +3,13 @@
 
 """
 OpenAI通用视觉大模型处理器实现
-支持通过消息metadata配置的prompt进行多模态理解
+专注于核心的多模态理解功能
 """
 
-import asyncio
-import base64
 import time
 import json
 from typing import Dict, Any, List, Optional
 from loguru import logger
-import openai
 from openai import OpenAI
 
 from .base import BaseLLMProcessor
@@ -22,10 +19,13 @@ from core.interfaces import ProcessingTask, ProcessingResult
 class OpenAIVLMProcessor(BaseLLMProcessor):
     """OpenAI通用视觉大模型处理器实现"""
 
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+
     async def _do_initialize(self) -> bool:
         """初始化OpenAI客户端"""
         try:
-            # 获取配置
+            # 获取VLM配置
             self.processor_name = self.config.get("processor_name", "openai_vlm_processor")
             self.base_url = self.config.get("base_url", "http://cc.komect.com/llm/vlgroup/")
             self.api_key = self.config.get("api_key", "EMPTY")
@@ -34,23 +34,23 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
             self.temperature = self.config.get("temperature", 0.7)
             self.stream = self.config.get("stream", False)
 
-            # 初始化OpenAI客户端
-            self.client = OpenAI(
+            # 初始化VLM客户端
+            self.vlm_client = OpenAI(
                 base_url=self.base_url,
                 api_key=self.api_key,
             )
 
-            # 默认系统提示（如果消息中没有指定）
+            # 默认系统提示
             self.default_system_prompt = self.config.get(
                 "default_system_prompt",
                 self._get_default_system_prompt()
             )
 
-            logger.info(f"OpenAI VLM client initialized: {self.model_name}")
+            logger.info(f"OpenAI VLM处理器已初始化: {self.model_name}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to initialize OpenAI VLM client: {e}")
+            logger.error(f"Failed to initialize OpenAI VLM processor: {e}")
             return False
 
     def _get_default_system_prompt(self) -> str:
@@ -66,39 +66,49 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
         try:
             # 解析任务数据
             message_data = self._parse_task_message(task)
+            
+            logger.info(f"处理VLM任务: {message_data.get('task_type', 'general')}")
 
-            # 检查是否有图像数据
-            if not message_data.get("image_base64") and not message_data.get("images_base64"):
-                raise ValueError("No image data found in task")
-
-            # 构建消息
-            messages = self._build_messages(message_data)
-
-            # 调用OpenAI API
-            if self.stream:
-                response = await self._stream_completion(messages)
-            else:
-                response = await self._complete_chat(messages)
-
-            # 处理响应
-            result = self._process_response(response, message_data)
-
-            return ProcessingResult(
-                frame_id=message_data.get("frame_id", "unknown"),
-                processor_name=self.processor_name,
-                result_data=result,
-                confidence=result.get("confidence", 0.8),
-                metadata={
-                    "model": self.model_name,
-                    "task_type": message_data.get("task_type", "general"),
-                    "processing_time": result.get("processing_time", 0),
-                    "source": message_data.get("source", "unknown")
-                }
-            )
+            # 处理通用VLM任务
+            return await self._process_general_vlm_task(task, message_data)
 
         except Exception as e:
             logger.error(f"OpenAI VLM processing failed for task {task.task_id}: {e}")
             raise
+
+    async def _process_general_vlm_task(self, task: ProcessingTask, message_data: Dict[str, Any]) -> ProcessingResult:
+        """处理通用VLM任务"""
+        # 检查图像数据
+        if not self._has_image_data(message_data):
+            raise ValueError("No image data found in task")
+
+        # 获取任务配置
+        task_config = self._get_vlm_task_config(message_data)
+        
+        # 构建消息
+        messages = self._build_vlm_messages(message_data, task_config)
+
+        # 获取VLM配置
+        vlm_config = task_config.get("vlm_config", {})
+        
+        # 调用VLM API
+        response = await self._call_vlm_api(messages, vlm_config)
+
+        # 处理响应
+        result = self._process_response(response, message_data, task_config)
+
+        return ProcessingResult(
+            frame_id=message_data.get("frame_id", "unknown"),
+            processor_name=self.processor_name,
+            result_data=result,
+            confidence=result.get("confidence", 0.8),
+            metadata={
+                "model": vlm_config.get("model", self.model_name),
+                "task_type": task_config.get("task_type", "general"),
+                "processing_time": result.get("processing_time", 0),
+                "source": message_data.get("source", "unknown")
+            }
+        )
 
     def _parse_task_message(self, task: ProcessingTask) -> Dict[str, Any]:
         """解析任务消息数据"""
@@ -122,19 +132,80 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
             "frame_id": task.frame_data.frame_id,
             "timestamp": task.frame_data.timestamp,
             "image_base64": None,
-            "images_base64": [],  # 新增多图支持
+            "images_base64": [],
             "task_type": "general",
             "prompt": None,
             "metadata": {}
         }
 
-    def _build_messages(self, message_data: Dict[str, Any]) -> List[Dict]:
-        """构建消息内容"""
-        # 获取系统提示
-        system_prompt = message_data.get("system_prompt", self.default_system_prompt)
+    def _get_vlm_task_config(self, message_data: Dict[str, Any]) -> Dict[str, Any]:
+        """获取VLM任务配置"""
+        # 从vlm_task_config获取
+        if "vlm_task_config" in message_data:
+            vlm_config_dict = message_data["vlm_task_config"]
+            # 根据检测结果或消息中的task_type确定任务类型
+            task_type = self._determine_task_type_from_message(message_data, vlm_config_dict)
+            if task_type and task_type in vlm_config_dict:
+                logger.info(f"使用vlm_task_config中的任务: {task_type}")
+                return vlm_config_dict[task_type]
+        
+        # 从消息数据中直接获取（旧格式）
+        if "system_prompt" in message_data or "user_prompt" in message_data:
+            logger.info("使用消息中的直接prompt配置")
+            return {
+                "task_type": message_data.get("task_type", "general"),
+                "system_prompt": message_data.get("system_prompt", self.default_system_prompt),
+                "user_prompt": message_data.get("user_prompt", message_data.get("prompt", "请分析这张图像。")),
+                "vlm_config": {}
+            }
+        
+        # 默认配置
+        logger.info("使用默认任务配置")
+        return {
+            "task_type": "general_analysis",
+            "system_prompt": self.default_system_prompt,
+            "user_prompt": "请分析这张图像。",
+            "vlm_config": {}
+        }
 
-        # 获取用户提示
-        user_prompt = message_data.get("prompt", message_data.get("user_prompt", "请分析这些图像。"))
+    def _determine_task_type_from_message(self, message_data: Dict[str, Any], vlm_config_dict: Dict[str, Any]) -> str:
+        """根据消息数据确定任务类型"""
+        # 1. 如果消息中指定了task_type，优先使用
+        if "task_type" in message_data:
+            task_type = message_data["task_type"]
+            if task_type in vlm_config_dict:
+                return task_type
+        
+        # 2. 根据检测结果确定任务类型
+        detected_categories = message_data.get("categories", [])
+        if detected_categories:
+            # 如果检测到人员且有person_detection配置，优先使用
+            if "person" in detected_categories and "person_detection" in vlm_config_dict:
+                return "person_detection"
+            
+            # 如果检测到物体且有object_detection配置
+            if detected_categories and "object_detection" in vlm_config_dict:
+                return "object_detection"
+        
+        # 3. 默认使用general_analysis
+        if "general_analysis" in vlm_config_dict:
+            return "general_analysis"
+        
+        # 4. 如果以上都没有，返回第一个可用的配置
+        return list(vlm_config_dict.keys())[0] if vlm_config_dict else "general_analysis"
+
+    def _has_image_data(self, message_data: Dict[str, Any]) -> bool:
+        """检查是否有图像数据"""
+        return bool(message_data.get("image_base64") or message_data.get("images_base64"))
+
+    def _build_vlm_messages(self, message_data: Dict[str, Any], task_config: Dict[str, Any] = None) -> List[Dict]:
+        """构建VLM消息内容"""
+        if task_config is None:
+            task_config = self._get_vlm_task_config(message_data)
+            
+        # 获取系统提示和用户提示
+        system_prompt = task_config.get("system_prompt", self.default_system_prompt)
+        user_prompt = task_config.get("user_prompt", "请分析这些图像。")
 
         # 构建消息内容
         content = []
@@ -142,7 +213,6 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
         # 处理多图情况
         images_base64 = message_data.get("images_base64", [])
         if images_base64:
-            # 如果有多图数组，使用多图数组
             for image_base64 in images_base64:
                 content.append({
                     "type": "image_url",
@@ -151,7 +221,6 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
                     }
                 })
         elif message_data.get("image_base64"):
-            # 兼容单图情况
             content.append({
                 "type": "image_url",
                 "image_url": {
@@ -165,85 +234,76 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
             "text": user_prompt
         })
 
-        # 构建消息
-        messages = [
-            {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
-                "role": "user",
-                "content": content
-            }
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content}
         ]
 
-        return messages
-
-    async def _complete_chat(self, messages: List[Dict]) -> Dict[str, Any]:
-        """非流式聊天完成"""
+    async def _call_vlm_api(self, messages: List[Dict], vlm_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """调用VLM API"""
+        if vlm_config is None:
+            vlm_config = {}
+            
         start_time = time.time()
 
         try:
+            # 使用配置中的参数，如果没有则使用默认值
+            model = vlm_config.get("model", self.model_name)
+            max_tokens = vlm_config.get("max_tokens", self.max_tokens)
+            temperature = vlm_config.get("temperature", self.temperature)
+            
+            # 格式化消息用于日志
             formatted_messages = self._format_messages_for_log(messages)
-            logger.info(f"OpenAI API call: {formatted_messages}")
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                timeout=self.timeout
-            )
+            logger.info(f"VLM API调用: {formatted_messages}")
+            
+            if self.stream:
+                response = self.vlm_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=True,
+                    timeout=self.timeout
+                )
+                
+                # 收集流式响应
+                content_parts = []
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        content_parts.append(chunk.choices[0].delta.content)
 
-            processing_time = time.time() - start_time
+                processing_time = time.time() - start_time
+                return {
+                    "type": "stream",
+                    "content": "".join(content_parts),
+                    "processing_time": processing_time
+                }
+            else:
+                response = self.vlm_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout=self.timeout
+                )
 
-            return {
-                "type": "complete",
-                "response": response,
-                "processing_time": processing_time
-            }
-
-        except Exception as e:
-            logger.error(f"OpenAI API call failed: {e}")
-            raise
-
-    async def _stream_completion(self, messages: List[Dict]) -> Dict[str, Any]:
-        """流式聊天完成"""
-        start_time = time.time()
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                stream=True,
-                timeout=self.timeout
-            )
-
-            # 收集流式响应
-            content_parts = []
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    content_parts.append(chunk.choices[0].delta.content)
-
-            processing_time = time.time() - start_time
-
-            return {
-                "type": "stream",
-                "content": "".join(content_parts),
-                "processing_time": processing_time
-            }
+                processing_time = time.time() - start_time
+                return {
+                    "type": "complete",
+                    "response": response,
+                    "processing_time": processing_time
+                }
 
         except Exception as e:
-            logger.error(f"OpenAI streaming API call failed: {e}")
+            logger.error(f"VLM API调用失败: {e}")
             raise
 
-    def _process_response(self, response: Dict[str, Any], message_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_response(self, response: Dict[str, Any], message_data: Dict[str, Any], task_config: Dict[str, Any]) -> Dict[str, Any]:
         """处理API响应"""
         result = {
             "frame_id": message_data.get("frame_id"),
             "timestamp": message_data.get("timestamp"),
-            "task_type": message_data.get("task_type", "general"),
+            "task_type": task_config.get("task_type", "general"),
             "processing_time": response.get("processing_time", 0),
             "model": self.model_name,
             "source_metadata": message_data.get("metadata", {})
@@ -288,20 +348,20 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
 
         # 根据任务类型调整
         task_type = message_data.get("task_type", "general")
-        if task_type in ["person_detection", "object_detection"]:
+        if task_type in ["object_detection", "person_detection"]:
             base_confidence += 0.1
 
         return min(1.0, base_confidence)
 
     async def _do_health_check(self) -> bool:
-        """OpenAI健康检查"""
+        """健康检查"""
         try:
-            # 发送一个简单的测试请求
+            # 检查VLM客户端
             test_messages = [
                 {"role": "user", "content": "Hello, this is a health check."}
             ]
 
-            response = self.client.chat.completions.create(
+            response = self.vlm_client.chat.completions.create(
                 model=self.model_name,
                 messages=test_messages,
                 max_tokens=10,
@@ -311,13 +371,13 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
             return response.choices[0].message.content is not None
 
         except Exception as e:
-            logger.error(f"OpenAI VLM health check failed: {e}")
+            logger.error(f"健康检查失败: {e}")
             return False
 
     def _format_messages_for_log(self, messages):
+        """格式化消息用于日志输出"""
         def shorten_url(url):
             if url.startswith("data:image"):
-                # 只保留前后20位
                 return url[:20] + "...(base64省略)..." + url[-20:]
             return url
 
@@ -336,7 +396,6 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
                 return new_content
             return content
 
-        # 处理每条message
         formatted = []
         for msg in messages:
             msg_copy = msg.copy()
@@ -344,3 +403,38 @@ class OpenAIVLMProcessor(BaseLLMProcessor):
                 msg_copy["content"] = process_content(msg_copy["content"])
             formatted.append(msg_copy)
         return formatted
+
+    def _create_result(self, task: ProcessingTask, answer: Any, 
+                      additional_metadata: Optional[Dict] = None) -> ProcessingResult:
+        """创建处理结果"""
+        metadata = {
+            "processor": "openai_vlm",
+            "timestamp": time.time()
+        }
+        
+        if additional_metadata:
+            metadata.update(additional_metadata)
+        
+        return ProcessingResult(
+            frame_id=task.frame_data.frame_id,
+            processor_name="openai_vlm",
+            result_data={"answer": answer} if isinstance(answer, str) else answer,
+            confidence=0.9,
+            metadata=metadata,
+            timestamp=time.time()
+        )
+    
+    def _create_error_result(self, task: ProcessingTask, error_message: str) -> ProcessingResult:
+        """创建错误结果"""
+        return ProcessingResult(
+            frame_id=task.frame_data.frame_id,
+            processor_name="openai_vlm",
+            result_data={"error": error_message},
+            confidence=0.0,
+            metadata={
+                "processor": "openai_vlm",
+                "error": True,
+                "timestamp": time.time()
+            },
+            timestamp=time.time()
+        )

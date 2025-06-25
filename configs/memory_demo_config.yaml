@@ -1,0 +1,236 @@
+# 视觉记忆提取演示配置文件
+# 架构：摄像头 -> 相似帧过滤 -> Kafka队列(携带任务配置) -> 通用VLM Worker -> 记忆存储
+
+# 服务配置
+service:
+  name: "visual_memory_service"
+  version: "1.0.0"
+  host: "localhost"
+  port: 8080
+  worker_count: 4
+  max_queue_size: 100
+
+# 摄像头配置
+camera:
+  camera_index: 0        # 摄像头索引，0为默认摄像头
+  fps: 1.0              # 每秒处理帧数
+  # resolution: [640, 480] # 分辨率 [宽度, 高度]
+
+# 预处理器配置
+preprocessors:
+  # 相似帧过滤器 - 预处理阶段只做相似帧过滤
+  similar_frame_filter:
+    enabled: true
+    similarity_threshold: 0.90
+    comparison_method: "clip"
+    clip_model_path: "models/clip-vit-base-patch32"
+    history_size: 5
+    min_time_interval: 1.0
+    skip_similar: true
+    replace_similar_frame: false
+
+# 记忆提取配置 - 通过队列消息传递给VLM Worker
+memory_extraction:
+  # 目标物体列表
+  target_objects:
+    - "手机"
+    - "桌子"
+    - "电脑" 
+    - "笔"
+    - "水杯"
+    - "地板"
+    - "椅子"
+    - "花"
+    - "人"
+  
+  # VLM配置
+  vlm_max_tokens: 64
+  
+  # 记忆存储配置
+  memory_storage:
+    storage_dir: "memory_storage"
+    max_frames_per_category: 100
+    max_total_frames: 1000
+    cleanup_interval: 300
+    frame_ttl: 3600
+  
+  # 物体检测系统提示词（为空则使用默认）
+  detection_system_prompt: ""
+
+# VLM任务配置 - 定义所有可能的视觉任务类型
+vlm_tasks:
+  # 记忆物体检测任务
+  memory_detection:
+    task_type: "memory_detection"
+    system_prompt: |
+      你是一位专业的计算机视觉专家，擅长目标检测和物体识别。请对提供的图像进行全面的目标检测，识别出图像中的所有物体。
+
+      输出类别仅限于以下物体类别中的一种或多种：手机, 桌子, 电脑, 笔, 水杯, 地板, 椅子, 花, 人
+
+      要求：
+      1. 只返回在图像中真实存在的物体类别
+      2. 用中文逗号分隔多个类别
+      3. 不要添加任何解释或描述
+      4. 不允许出现不在指定类别列表中的物体名称
+
+      示例输出格式：水杯,桌子,手机
+    user_prompt: "请识别图像中的所有物体类别，只返回类别名称列表，用中文逗号分隔。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 64
+    #   temperature: 0.1
+    #   base_url: "http://cc.komect.com/llm/vlgroup/"
+    #   api_key: "EMPTY"
+
+  # 记忆查询问答任务
+  memory_query:
+    task_type: "memory_query"
+    system_prompt: |
+      你具有高级图像分析系统，拥有连续多帧图像的观察结果。
+
+      请你根据以下连续拍摄的图像，分析用户的问题，并根据图像中的内容进行推理判断。
+
+      要求：
+      1. 仔细观察图像中的物体、位置、状态等细节
+      2. 根据图像内容直接回答问题，不要编造信息
+      3. 如果涉及空间位置，请只返回物体当前所在的位置描述
+      4. 保持回答简洁明确，不要解释过程
+      5. 禁止在回答中出现"图片"和"图像"等词语
+
+      注意：你看到的图像是真实的连续观察结果，请基于这些视觉信息回答用户问题。
+    user_prompt: "请根据图像内容回答用户的问题。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 128
+    #   temperature: 0.7
+    #   base_url: "http://cc.komect.com/llm/vlgroup/"
+    #   api_key: "EMPTY"
+
+  # 类别提取任务（用于记忆查询）
+  category_extraction:
+    task_type: "category_extraction"
+    system_prompt: |
+      你是一位视觉语言理解专家。用户提出了一个问题，你需要根据语义，在提供的类目中找出最相关的一项或多项。
+
+      即使用户没有直接提到类目的名字，也请结合含义判断是否相关。
+
+      请从类目列表中返回最相关的项在列表中的位置（从0开始的索引），不必解释原因，不能返回不在列表中的项。
+
+      输出格式：只返回索引数字，如果有多个用逗号分隔，例如：0,2,5
+    user_prompt: "请从类目列表中找出与问题最相关的类别索引。"
+    # llm_config:
+    #   model: "qwen2.5-7b-test"
+    #   max_tokens: 64
+    #   temperature: 0.1
+    #   base_url: "http://10.112.0.32:5239/v1"
+    #   api_key: ""
+
+  # 通用对象检测任务
+  object_detection:
+    task_type: "object_detection"
+    system_prompt: |
+      你是一个专业的物体识别专家。请仔细观察图像中的所有物体，并提供详细的描述。
+
+      请重点关注：
+      1. 物体的类型和名称
+      2. 物体的位置和大小
+      3. 物体的状态和特征
+      4. 物体之间的空间关系
+
+      请用中文回答，保持描述准确和客观。
+    user_prompt: "请识别并描述图像中的所有物体。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 256
+    #   temperature: 0.3
+
+  # 场景分析任务
+  scene_analysis:
+    task_type: "scene_analysis"
+    system_prompt: |
+      你是一个专业的场景分析专家。请对图像进行全面的场景分析。
+
+      分析维度：
+      1. 场景类型（室内/室外、具体环境）
+      2. 主要物体和人员
+      3. 活动和行为分析
+      4. 环境氛围和特点
+      5. 潜在的安全或注意事项
+
+      请提供结构化的分析结果。
+    user_prompt: "请对这个场景进行全面分析。"
+    # vlm_config:
+    #   model: "Qwen2.5-VL-72B-Instruct-AWQ"
+    #   max_tokens: 512
+    #   temperature: 0.5
+
+# 队列配置
+queue:
+  type: "kafka"  # 使用Kafka队列
+  config:
+    bootstrap_servers: ["localhost:9092"]
+    topic_name: "demo"
+    consumer_group: "vlm_workers"
+    use_kafka: true
+    max_request_size: 10485760
+    timeout_default: 30.0
+    serialize_messages: true
+
+# 记忆API配置
+memory_api:
+  enabled: true
+  host: "0.0.0.0"
+  port: 9005
+  debug: false
+  memory_storage:
+    storage_dir: "memory_storage"
+    max_frames_per_category: 100
+    max_total_frames: 1000
+    cleanup_interval: 300
+    frame_ttl: 3600
+  memory_vlm:
+    vlm_config:
+      base_url: "http://cc.komect.com/llm/vlgroup/"
+      api_key: "EMPTY"
+      model: "Qwen2.5-VL-72B-Instruct-AWQ"
+      max_tokens: 128
+      temperature: 0.7
+    llm_config:
+      base_url: "http://10.112.0.32:5239/v1"
+      api_key: ""
+      model: "qwen2.5-7b-test"
+    max_frames_per_query: 3
+    category_extraction_enabled: true
+    prompts:
+      memory_qa_system_prompt: |
+        你具有高级图像分析系统，拥有连续多帧图像的观察结果。
+
+        请你根据以下连续拍摄的图像，分析用户的问题，并根据图像中的内容进行推理判断。
+
+        要求：
+        1. 仔细观察图像中的物体、位置、状态等细节
+        2. 根据图像内容直接回答问题，不要编造信息
+        3. 如果涉及空间位置，请只返回物体当前所在的位置描述
+        4. 保持回答简洁明确，不要解释过程
+        5. 禁止在回答中出现"图片"和"图像"等词语
+
+        注意：你看到的图像是真实的连续观察结果，请基于这些视觉信息回答用户问题。
+      category_extraction_prompt: |
+        你是一位视觉语言理解专家。用户提出了一个问题，你需要根据语义，在提供的类目中找出最相关的一项或多项。
+
+        即使用户没有直接提到类目的名字，也请结合含义判断是否相关。
+
+        请从类目列表中返回最相关的项在列表中的位置（从0开始的索引），不必解释原因，不能返回不在列表中的项。
+
+        输出格式：只返回索引数字，如果有多个用逗号分隔，例如：0,2,5
+
+# 演示配置
+demo:
+  stats_interval: 30
+  show_detection_info: true
+  show_memory_stats: true
+
+# 日志配置
+logging:
+  level: "INFO"
+  console_output: true

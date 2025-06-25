@@ -118,6 +118,11 @@ class VLMWorker:
                 logger.warning(f"Invalid message format: {message.keys()}")
                 return
             
+            # 检查图像数据
+            data = message.get("data", message)
+            image_check_result = self._check_image_data(data)
+            logger.info(f"Image data check for frame {frame_id}: {image_check_result}")
+            
             # 创建处理任务
             task = self._create_processing_task(message)
             
@@ -139,7 +144,7 @@ class VLMWorker:
                 task.processing_results.append(result)
                 
                 # 从消息中获取后处理器配置并执行
-                postprocessor_config = message.get("postprocessor_config", {})
+                postprocessor_config = message.get("data", {}).get("postprocessor_config", {})
                 if postprocessor_config:
                     await self._execute_dynamic_postprocessors(task, postprocessor_config)
                 else:
@@ -237,6 +242,9 @@ class VLMWorker:
             elif name == "greeting_printer":
                 from postprocessor.greeting_printer import GreetingPrinterPostprocessor
                 return GreetingPrinterPostprocessor(config)
+            elif name == "memory_storage":
+                from postprocessor.memory_storage import MemoryStoragePostprocessor
+                return MemoryStoragePostprocessor(config)
             else:
                 logger.warning(f"Unknown postprocessor type: {name}")
                 return None
@@ -308,6 +316,49 @@ class VLMWorker:
         else:
             return shorten_value("value", message)
 
+    def _check_image_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """检查图像数据的有效性"""
+        try:
+            from utils.image_utils import validate_image_data, extract_image_from_data
+            
+            check_result = {
+                "has_image_base64": False,
+                "has_raw_image": False,
+                "data_type": str(type(data)),
+                "data_keys": [],
+                "image_validation": None
+            }
+            
+            if isinstance(data, dict):
+                check_result["data_keys"] = list(data.keys())
+                
+                # 检查是否有base64字段
+                base64_fields = ["image_base64", "images_base64", "image_data", "base64_image"]
+                for field in base64_fields:
+                    if field in data and data[field]:
+                        check_result["has_image_base64"] = True
+                        break
+                
+                # 尝试提取图像数据
+                image = extract_image_from_data(data)
+                if image is not None:
+                    check_result["has_raw_image"] = True
+                    check_result["image_shape"] = str(image.shape)
+                
+                # 使用验证函数
+                validation_result = validate_image_data(data)
+                check_result["image_validation"] = validation_result
+            
+            return check_result
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "data_type": str(type(data)),
+                "has_image_base64": False,
+                "has_raw_image": False
+            }
+
 
 async def run_worker(config_path: str = None):
     """运行工作进程"""
@@ -361,8 +412,7 @@ async def run_worker(config_path: str = None):
         "max_tokens": int(os.environ.get("VLM_MAX_TOKENS", vlm_config.get("max_tokens", 512))),
         "temperature": float(os.environ.get("VLM_TEMPERATURE", vlm_config.get("temperature", 0.7))),
         "timeout": float(os.environ.get("VLM_TIMEOUT", vlm_config.get("timeout", 30.0))),
-        "default_system_prompt": vlm_config.get("default_system_prompt", ""),
-        "task_configs": config.get("task_configs", {})
+        "default_system_prompt": vlm_config.get("default_system_prompt", "")
     }
     
     # 设置日志级别

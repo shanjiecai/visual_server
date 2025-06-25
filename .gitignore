@@ -8,6 +8,7 @@ venv/
 .ruff_cache/
 .pytest_cache/
 config.yaml
+# *.yaml
 .env
 *.mp4
 /logs/
@@ -17,3 +18,4 @@ config.yaml
 /worker/vlm_worker_config.yaml
 **/__pycache__/
 *.pyc
+/memory_storage/

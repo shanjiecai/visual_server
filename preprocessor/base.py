@@ -118,7 +118,8 @@ class BasePreprocessor(IPreprocessor):
                         "status": "error",
                         "error_type": type(e).__name__
                     },
-                    timestamp=time.time()
+                    timestamp=time.time(),
+                    frame_data=frame_data
                 )
     
     @abstractmethod
@@ -153,7 +154,8 @@ class BasePreprocessor(IPreprocessor):
                     result_data={"error": str(e)},
                     confidence=0.0,
                     metadata={"status": "error", "error_type": type(e).__name__},
-                    timestamp=time.time()
+                    timestamp=time.time(),
+                    frame_data=frame
                 )
                 for frame in frame_batch
             ]
@@ -205,7 +207,8 @@ class BasePreprocessor(IPreprocessor):
             result_data={"disabled": True},
             confidence=1.0,
             metadata={"status": "disabled"},
-            timestamp=time.time()
+            timestamp=time.time(),
+            frame_data=frame_data
         )
     
     def _create_error_result(self, frame_data: FrameData, error_message: str) -> ProcessingResult:
@@ -219,7 +222,8 @@ class BasePreprocessor(IPreprocessor):
                 "status": "error",
                 "error_message": error_message
             },
-            timestamp=time.time()
+            timestamp=time.time(),
+            frame_data=frame_data
         )
     
     def _create_result(self, frame_data: FrameData, result_data: Any, 
@@ -245,7 +249,8 @@ class BasePreprocessor(IPreprocessor):
             result_data=result_data,
             confidence=confidence,
             metadata=metadata,
-            timestamp=current_timestamp
+            timestamp=current_timestamp,
+            frame_data=frame_data  # 添加原始帧数据引用
         )
     
     async def _run_in_thread(self, func, *args, **kwargs):

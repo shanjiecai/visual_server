@@ -22,7 +22,6 @@ import os
 import signal
 import sys
 import yaml
-import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 from loguru import logger
@@ -31,7 +30,7 @@ from producer.camera_source import CameraVideoSource
 from preprocessor.similar_frame_filter import SimilarFrameFilterProcessor
 from preprocessor.yolo_detector import YOLODetectorProcessor
 from message_queue.kafka_queue import KafkaQueue
-from core.pipeline import ProcessingPipeline, PipelineManager
+from core.pipeline import PipelineManager
 from core.filters import create_person_detection_filter
 
 
@@ -42,7 +41,6 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
     camera_source = CameraVideoSource(
         camera_index=camera_config.get("camera_index", 0),
         fps=camera_config.get("fps", 1.0),
-        resolution=tuple(camera_config.get("resolution", [640, 480]))
     )
     await camera_source.initialize()
     logger.info(f"摄像头初始化完成: index={camera_config.get('camera_index', 0)}, fps={camera_config.get('fps', 1.0)}")
@@ -59,10 +57,13 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"YOLO检测器初始化完成: model={yolo_config.get('model_path', 'models/yolo-v8l-seg.pt')}")
 
     # 初始化Kafka队列
-    queue_config = config.get("queue", {})
-    kafka_queue = KafkaQueue(config=queue_config)
-    await kafka_queue.initialize()
-    logger.info(f"Kafka队列初始化完成: topic={queue_config.get('topic_name', 'video_processing')}")
+    queue = config.get("queue", {})
+    if queue.get("type") == "kafka":
+        kafka_queue = KafkaQueue(config=queue.get("config", {}))
+        await kafka_queue.initialize()
+        logger.info(f"Kafka队列初始化完成: topic={queue.get('config', {}).get('topic_name', 'video_processing')}")
+    else:
+        raise ValueError(f"不支持的队列类型: {queue.get('type')}")
 
     # 创建流水线
     pipeline_manager = PipelineManager()
@@ -75,11 +76,13 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
     # 添加人员检测过滤器
     pipeline.add_filter(create_person_detection_filter(yolo_detector.processor_name))
     
-    # 设置后处理器配置（从config.yaml中读取）
-    postprocessor_config = config.get("postprocessors", {})
-    if postprocessor_config:
-        pipeline.set_postprocessor_config(postprocessor_config)
-        logger.info(f"设置后处理器配置: {list(postprocessor_config.keys())}")
+    # 设置独立的VLM任务配置和后处理器配置
+    vlm_and_postprocessor_config = {
+        "vlm_task_config": config.get("vlm_task_config", {}),
+        "postprocessor_config": config.get("postprocessors", {})
+    }
+    pipeline.set_postprocessor_config(vlm_and_postprocessor_config)
+    logger.info("设置独立的VLM任务配置和后处理器配置")
     
     # 设置输出队列
     pipeline.set_output_queue(kafka_queue)
@@ -150,87 +153,30 @@ async def cleanup(components: Dict[str, Any]) -> None:
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """加载配置文件"""
-    # 默认配置
-    default_config = {
-        "camera": {
-            "camera_index": 0,
-            "fps": 1.0,
-            "resolution": [640, 480]
-        },
-        "similar_frame_filter": {
-            "similarity_threshold": 0.8,
-            "comparison_method": "clip",
-            "clip_model_path": "models/clip-vit-base-patch32",
-            "history_size": 5,
-            "min_time_interval": 0.5
-        },
-        "preprocessors": {
-            "yolo_detector": {
-                "model_path": "models/yolo-v8l-seg.pt",
-                "device": "cpu",
-                "confidence_threshold": 0.5,
-                "target_classes": ["person"],
-                "enable_downstream": True,
-                "task_configs": {
-                    "person_detection": {
-                        "system_prompt": """你是一个友好的智能助手，当检测到有人出现时，需要用温暖友好的语气向他们打招呼。
-
-请根据图像中人员的情况（人数、位置等），生成合适的问候语。
-保持语气自然、友好、热情。""",
-                        "user_prompt": "你好！我看到有人出现在画面中，请向他们打个招呼吧。",
-                        "task_type": "person_detection"
-                    },
-                    "general_analysis": {
-                        "system_prompt": """你是一个专业的视觉分析专家。请对图像进行全面的分析和描述。
-
-请重点关注：
-1. 场景的整体描述
-2. 重要物体和人员
-3. 环境和氛围
-4. 值得注意的细节""",
-                        "user_prompt": "请对这张图像进行全面分析，描述你观察到的内容。",
-                        "task_type": "general_analysis"
-                    }
-                }
-            }
-        },
-        "queue": {
-            "bootstrap_servers": ["localhost:9092"],
-            "topic_name": "demo",
-            "consumer_group": "video_processors",
-            "use_kafka": True,
-            "max_request_size": 10485760,
-            "timeout_default": 30.0,
-            "serialize_messages": True
-        }
-    }
+    if not config_path:
+        raise ValueError("必须指定配置文件路径")
     
-    # 如果指定了配置文件，则加载并合并
-    if config_path and os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                file_config = yaml.safe_load(f)
-                # 简单的字典合并
-                for key, value in file_config.items():
-                    if isinstance(value, dict) and key in default_config:
-                        default_config[key].update(value)
-                    else:
-                        default_config[key] = value
-            logger.info(f"已加载配置文件: {config_path}")
-        except Exception as e:
-            logger.warning(f"加载配置文件失败，使用默认配置: {e}")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"配置文件不存在: {config_path}")
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        logger.info(f"已加载配置文件: {config_path}")
+    except Exception as e:
+        raise RuntimeError(f"加载配置文件失败: {e}")
     
     # 环境变量覆盖
-    if os.getenv("CAMERA_INDEX"):
-        default_config["camera"]["camera_index"] = int(os.getenv("CAMERA_INDEX"))
-    if os.getenv("CAMERA_FPS"):
-        default_config["camera"]["fps"] = float(os.getenv("CAMERA_FPS"))
-    if os.getenv("KAFKA_HOST") and os.getenv("KAFKA_PORT"):
-        default_config["queue"]["bootstrap_servers"] = [f"{os.getenv('KAFKA_HOST')}:{os.getenv('KAFKA_PORT')}"]
-    if os.getenv("KAFKA_TOPIC"):
-        default_config["queue"]["topic_name"] = os.getenv("KAFKA_TOPIC")
+    if os.getenv("CAMERA_INDEX") and "camera" in config:
+        config["camera"]["camera_index"] = int(os.getenv("CAMERA_INDEX"))
+    if os.getenv("CAMERA_FPS") and "camera" in config:
+        config["camera"]["fps"] = float(os.getenv("CAMERA_FPS"))
+    if os.getenv("KAFKA_HOST") and os.getenv("KAFKA_PORT") and "queue" in config:
+        config["queue"]["config"]["bootstrap_servers"] = [f"{os.getenv('KAFKA_HOST')}:{os.getenv('KAFKA_PORT')}"]
+    if os.getenv("KAFKA_TOPIC") and "queue" in config:
+        config["queue"]["config"]["topic_name"] = os.getenv("KAFKA_TOPIC")
     
-    return default_config
+    return config
 
 
 def setup_logging() -> None:
@@ -257,7 +203,7 @@ def setup_logging() -> None:
 def parse_args() -> argparse.Namespace:
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description="视频流处理演示程序")
-    parser.add_argument("--config", type=str, help="配置文件路径")
+    parser.add_argument("--config", type=str, help="配置文件路径", default="./configs/demo_config.yaml")
     parser.add_argument("--camera-index", type=int, help="摄像头索引")
     parser.add_argument("--camera-fps", type=float, help="摄像头FPS")
     return parser.parse_args()
@@ -285,4 +231,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

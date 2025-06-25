@@ -11,10 +11,10 @@ from loguru import logger
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 
-from core.interfaces import IPostProcessor, ProcessingResult, FrameData
+from core.interfaces import IPostprocessor, ProcessingTask
 
 
-class BasePostProcessor(IPostProcessor):
+class BasePostProcessor(IPostprocessor):
     """后处理器基类"""
 
     def __init__(self, config: Dict[str, Any]):
@@ -45,20 +45,22 @@ class BasePostProcessor(IPostProcessor):
         """子类实现具体的初始化逻辑"""
         pass
 
-    async def process(self, frame_data: FrameData, aggregated_results: Dict[str, Any]) -> Optional[ProcessingResult]:
-        """处理数据"""
+    async def execute(self, task: ProcessingTask) -> Dict[str, Any]:
+        """执行后处理操作"""
         if not self.enabled:
             logger.debug(f"Post processor {self.processor_name} is disabled")
-            return None
+            return {"status": "disabled", "processor_name": self.processor_name}
 
         if not self._is_initialized:
-            raise RuntimeError(f"Post processor {self.processor_name} not initialized")
+            # 尝试自动初始化
+            if not await self.initialize():
+                raise RuntimeError(f"Post processor {self.processor_name} not initialized")
 
         start_time = time.time()
 
         try:
             result = await asyncio.wait_for(
-                self._do_process(frame_data, aggregated_results),
+                self._do_execute(task),
                 timeout=self.timeout
             )
 
@@ -66,19 +68,33 @@ class BasePostProcessor(IPostProcessor):
             self._processed_count += 1
             self._total_processing_time += processing_time
 
-            logger.debug(f"Post processor {self.processor_name} processed data in {processing_time:.3f}s")
+            logger.debug(f"Post processor {self.processor_name} executed in {processing_time:.3f}s")
+            
+            # 确保返回结果包含必要字段
+            if isinstance(result, dict):
+                result.setdefault("processor_name", self.processor_name)
+                result.setdefault("processing_time", processing_time)
+            
             return result
 
         except asyncio.TimeoutError:
             logger.warning(f"Post processor {self.processor_name} timeout after {self.timeout}s")
-            return None
+            return {
+                "status": "timeout", 
+                "processor_name": self.processor_name,
+                "timeout": self.timeout
+            }
         except Exception as e:
             logger.error(f"Error in post processor {self.processor_name}: {e}")
-            return None
+            return {
+                "status": "error", 
+                "processor_name": self.processor_name,
+                "error": str(e)
+            }
 
     @abstractmethod
-    async def _do_process(self, frame_data: FrameData, aggregated_results: Dict[str, Any]) -> ProcessingResult:
-        """子类实现具体的处理逻辑"""
+    async def _do_execute(self, task: ProcessingTask) -> Dict[str, Any]:
+        """子类实现具体的执行逻辑"""
         pass
 
     async def cleanup(self) -> None:
