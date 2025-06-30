@@ -8,6 +8,7 @@ from loguru import logger
 
 try:
     from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
+    # from aiokafka.errors import MessageSizeTooLargeError
     KAFKA_AVAILABLE = True
 except ImportError:
     KAFKA_AVAILABLE = False
@@ -31,12 +32,20 @@ class KafkaQueue(BaseMessageQueue):
         self.consumer_group = config.get("consumer_group", "video_processors")
         self.partition = config.get("partition", 0)
         
+        # 消息大小限制配置 - 与服务器配置匹配
+        self.max_message_size = int(config.get("max_message_size", 50 * 1024 * 1024))  # 50MB
+        self.max_request_size = int(config.get("max_request_size", 52 * 1024 * 1024))  # 52MB
+        
         # 序列化设置
         self.value_serializer = self._serialize_message
         self.value_deserializer = self._deserialize_message
         
         # 是否使用Kafka（如果不可用则使用内存队列）
         self.use_kafka = KAFKA_AVAILABLE and config.get("use_kafka", True)
+        
+        # 统计信息
+        self._large_message_count = 0
+        self._fallback_count = 0
     
     async def _do_initialize(self) -> bool:
         """初始化Kafka连接"""
@@ -52,7 +61,7 @@ class KafkaQueue(BaseMessageQueue):
                 bootstrap_servers=self.bootstrap_servers,
                 value_serializer=self.value_serializer,
                 compression_type="gzip",  # 压缩大图像数据
-                max_request_size=10 * 1024 * 1024,  # 10MB max message size
+                max_request_size=self.max_request_size,
                 request_timeout_ms=30000,
                 retry_backoff_ms=1000
             )
@@ -128,14 +137,14 @@ class KafkaQueue(BaseMessageQueue):
             
         except Exception as e:
             logger.error(f"Error publishing to Kafka: {e}")
-            # 备用到内存队列
-            try:
-                self._message_buffer.append((0, time.time(), item))
-                logger.debug("Message added to backup in-memory buffer")
-                return True
-            except Exception as backup_error:
-                logger.error(f"Backup queue also failed: {backup_error}")
-                return False
+            # # 备用到内存队列
+            # try:
+            #     self._message_buffer.append((0, time.time(), item))
+            #     logger.debug("Message added to backup in-memory buffer")
+            #     return True
+            # except Exception as backup_error:
+            #     logger.error(f"Backup queue also failed: {backup_error}")
+            #     return False
     
     def _build_message(self, item: Any, priority: int) -> Dict[str, Any]:
         """构建标准消息格式"""

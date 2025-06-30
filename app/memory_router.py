@@ -14,63 +14,24 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 from loguru import logger
 
 from utils.memory_storage import VisualMemoryStorage
 from consumer.openai_vlm import OpenAIVLMProcessor
 from core.interfaces import ProcessingTask, FrameData, ProcessingStatus
-from app.category_extractor import CategoryExtractor
+from app.utils.category_extractor import CategoryExtractor
 from common.response.response_schema import ResponseModel
+from app.schema.memory import (
+    HealthResponse,
+    CategoriesResponse,
+    FrameInfo,
+    FramesResponse,
+    MemoryQueryRequest,
+    MemoryQueryResponse,
+    ClearMemoryRequest,
+    MemoryStatsResponse
+)
 from common.response.response_code import CustomResponseCode
-
-
-# Pydantic 模型定义
-class MemoryQueryRequest(BaseModel):
-    question: str = Field(..., description="要查询的问题")
-    session_id: Optional[str] = Field(None, description="会话ID，可选")
-
-
-class ClearMemoryRequest(BaseModel):
-    confirm: bool = Field(..., description="确认清空所有记忆")
-
-
-class MemoryQueryResponse(BaseModel):
-    answer: str
-    session_id: str
-    timestamp: float
-    metadata: Optional[Dict[str, Any]] = None
-
-
-class MemoryStatsResponse(BaseModel):
-    overall_stats: Dict[str, Any]
-    category_stats: Dict[str, Any]
-
-
-class CategoriesResponse(BaseModel):
-    categories: List[str]
-    count: int
-
-
-class FrameInfo(BaseModel):
-    frame_id: str
-    timestamp: float
-    categories: List[str]
-    metadata: Optional[Dict[str, Any]] = None
-    created_at: float
-    has_image: bool
-
-
-class FramesResponse(BaseModel):
-    category: str
-    frames: List[FrameInfo]
-    count: int
-
-
-class HealthResponse(BaseModel):
-    status: str
-    timestamp: float
-    memory_stats: Dict[str, Any]
 
 
 class MemoryAPIService:

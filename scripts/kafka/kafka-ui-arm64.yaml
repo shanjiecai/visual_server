@@ -47,6 +47,10 @@ services:
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       KAFKA_JMX_PORT: 9997
       KAFKA_JMX_OPTS: -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka0 -Dcom.sun.management.jmxremote.rmi.port=9997
+      KAFKA_MESSAGE_MAX_BYTES: 52428800              # 50MB
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 52428800        # 50MB  
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 104857600      # 100MB
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 52428800        # 50MB
     volumes:
       - ./scripts/update_run.sh:/tmp/update_run.sh
     command: "bash -c 'if [ ! -f /tmp/update_run.sh ]; then echo \"ERROR: Did you forget the update_run.sh file that came with this docker-compose.yml file?\" && exit 1 ; else /tmp/update_run.sh && /etc/confluent/docker/run ; fi'"

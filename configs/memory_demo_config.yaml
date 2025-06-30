@@ -169,6 +169,7 @@ queue:
   type: "kafka"  # 使用Kafka队列
   config:
     bootstrap_servers: ["localhost:9092"]
+#    bootstrap_servers: ["36.137.208.254:5092"]  # 测试环境地址
     topic_name: "demo"
     consumer_group: "vlm_workers"
     use_kafka: true

@@ -10,4 +10,4 @@ __all__ = [
     'YOLODetectorProcessor',
     'Mask2FormerProcessor',
     'SimilarFrameFilterProcessor',
-] 
+]

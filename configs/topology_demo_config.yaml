@@ -1,0 +1,115 @@
+# 拓扑并行处理演示配置文件
+# 展示如何配置处理器的并行执行策略
+
+# 服务配置
+service:
+  name: "topology_processing_service"
+  version: "1.0.0"
+  host: "localhost"
+  port: 8080
+
+# 摄像头配置
+camera:
+  camera_index: 0
+  fps: 1.0
+  resolution: [640, 480]
+
+# 预处理器配置
+preprocessors:
+  # 相似帧过滤器配置
+  similar_frame_filter:
+    enabled: true
+    processor_type: "similar_frame_filter"
+    similarity_threshold: 0.85
+    comparison_method: "clip"
+    clip_model_path: "models/clip-vit-base-patch32"
+    history_size: 5
+    min_time_interval: 1.0
+    skip_similar: true
+
+  # YOLO检测器配置
+  yolo_detector:
+    enabled: true
+    processor_type: "yolo_detector"
+    model_path: "models/yolo-v8l-seg.pt"
+    device: "cpu"
+    confidence_threshold: 0.5
+    nms_threshold: 0.4
+    target_classes: ["person", "car", "bicycle"]
+    enable_downstream: true
+
+  # OMDet检测器配置
+  omdet_detector:
+    enabled: true
+    processor_type: "omdet_detector"
+    model_path: "models/omdet_large.pt"
+    device: "cpu"
+    confidence_threshold: 0.6
+    max_detections: 100
+    categories: ["object", "scene"]
+
+  # SAM2分割器配置
+  sam2_segmentor:
+    enabled: true
+    processor_type: "sam2_segmentor"
+    model_path: "models/sam2_hiera_large.pt"
+    device: "cpu"
+    prompt_mode: "auto"
+    mask_threshold: 0.5
+
+# 拓扑处理配置 - 核心配置部分
+topology:
+  stages:
+    # 第一阶段：预过滤阶段（串行执行）
+    - stage_id: "prefilter"
+      execution_mode: "sequential"  # 串行执行
+      processors:
+        - "similar_frame_filter"    # 相似帧过滤必须先执行
+      dependencies: []              # 无依赖，最先执行
+
+    # 第二阶段：并行检测阶段
+    - stage_id: "parallel_detection"
+      execution_mode: "parallel"   # 并行执行
+      processors:
+        - "yolo_detector"
+        - "omdet_detector"
+        - "sam2_segmentor"
+      dependencies: ["prefilter"]  # 依赖预过滤阶段
+
+# 队列配置
+queue:
+  type: "kafka"
+  config:
+    bootstrap_servers: ["localhost:9092"]
+    topic_name: "topology_demo"
+    consumer_group: "vlm_workers"
+    use_kafka: true
+    max_request_size: 10485760
+    timeout_default: 30.0
+    serialize_messages: true
+
+# VLM任务配置
+vlm_task_config:
+  multi_modal_analysis:
+    task_type: "multi_modal_analysis"
+    system_prompt: |
+      你是一个专业的多模态分析专家，拥有YOLO目标检测、OMDet通用检测和SAM2分割的综合分析能力。
+      
+      请基于以下处理结果进行综合分析：
+      1. YOLO检测结果 - 特定类别的目标检测
+      2. OMDet检测结果 - 通用目标检测
+      3. SAM2分割结果 - 精确的实例分割
+      
+      请提供：
+      - 场景整体描述
+      - 检测到的主要物体
+      - 物体间的空间关系
+      - 值得注意的细节
+    user_prompt: "请对图像进行多模态综合分析，结合所有检测和分割结果。"
+
+# 演示配置
+demo:
+  stats_interval: 30
+  show_topology_info: true
+  show_stage_timing: true
+  show_parallel_efficiency: true 

@@ -192,14 +192,7 @@ async def run_memory_demo(config: Dict[str, Any]) -> None:
     try:
         # 提示用户启动API服务
         if config.get("memory_api", {}).get("enabled", False):
-            logger.info("="*80)
-            logger.info("🌐 记忆查询API服务说明:")
-            logger.info("   记忆API已集成到主FastAPI应用中")
-            logger.info("   请单独启动API服务:")
-            logger.info("   python server.py")
-            logger.info("   然后访问: http://localhost:8000/memory/stats")
-            logger.info("   API文档: http://localhost:8000/docs")
-            logger.info("="*80)
+            logger.info("API文档: http://localhost:8000/docs")
         
         # 启动流水线
         await pipeline_manager.start_pipeline("memory_pipeline", camera_source)

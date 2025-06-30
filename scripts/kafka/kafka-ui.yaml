@@ -6,7 +6,7 @@ services:
     container_name: kafka-ui
     image: provectuslabs/kafka-ui:latest
     ports:
-      - 8080:8080
+      - 5080:8080
     depends_on:
       - kafka0
       - schemaregistry0
@@ -29,8 +29,8 @@ services:
     hostname: kafka0
     container_name: kafka0
     ports:
-      - "9092:9092"
-      - "9997:9997"
+      - "5092:9092"
+      - "5097:9997"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
@@ -48,14 +48,33 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_MESSAGE_MAX_BYTES: 52428800              # 50MB
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 52428800        # 50MB  
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 104857600      # 100MB
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 52428800        # 50MB
     volumes:
       - ./scripts/update_run.sh:/tmp/update_run.sh
     command: "bash -c 'if [ ! -f /tmp/update_run.sh ]; then echo \"ERROR: Did you forget the update_run.sh file that came with this docker-compose.yml file?\" && exit 1 ; else /tmp/update_run.sh && /etc/confluent/docker/run ; fi'"
 
+  schemaregistry0:
+    image: confluentinc/cp-schema-registry:7.2.1
+    ports:
+      - 5085:8085
+    depends_on:
+      - kafka0
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka0:29092
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
+      SCHEMA_REGISTRY_HOST_NAME: schemaregistry0
+      SCHEMA_REGISTRY_LISTENERS: http://schemaregistry0:8085
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_INTER_INSTANCE_PROTOCOL: "http"
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: INFO
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+
   kafka-connect0:
     image: confluentinc/cp-kafka-connect:7.2.1
     ports:
-      - 8083:8083
+      - 5083:8083
     depends_on:
       - kafka0
       - schemaregistry0
@@ -80,12 +99,12 @@ services:
   kafka-init-topics:
     image: confluentinc/cp-kafka:7.2.1
     volumes:
-       - ./data/message.json:/data/message.json
+        - ./data/message.json:/data/message.json
     depends_on:
-      - kafka1
+      - kafka0
     command: "bash -c 'echo Waiting for Kafka to be ready... && \
-               cub kafka-ready -b kafka1:29092 1 30 && \
-               kafka-topics --create --topic second.users --partitions 3 --replication-factor 1 --if-not-exists --bootstrap-server kafka1:29092 && \
-               kafka-topics --create --topic second.messages --partitions 2 --replication-factor 1 --if-not-exists --bootstrap-server kafka1:29092 && \
-               kafka-topics --create --topic first.messages --partitions 2 --replication-factor 1 --if-not-exists --bootstrap-server kafka0:29092 && \
-               kafka-console-producer --bootstrap-server kafka1:29092 -topic second.users < /data/message.json'"
+                cub kafka-ready -b kafka1:29092 1 30 && \
+                kafka-topics --create --topic second.users --partitions 3 --replication-factor 1 --if-not-exists --bootstrap-server kafka1:29092 && \
+                kafka-topics --create --topic second.messages --partitions 2 --replication-factor 1 --if-not-exists --bootstrap-server kafka1:29092 && \
+                kafka-topics --create --topic first.messages --partitions 2 --replication-factor 1 --if-not-exists --bootstrap-server kafka0:29092 && \
+                kafka-console-producer --bootstrap-server kafka1:29092 -topic second.users < /data/message.json'"
