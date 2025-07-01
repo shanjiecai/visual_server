@@ -29,14 +29,14 @@ class VLMWorker:
     
     def __init__(self, config: Dict[str, Any]):
         """初始化工作进程"""
-        self.worker_id = config.get("worker_id", f"vlm_worker_{uuid.uuid4().hex[:8]}")
+        self.worker_id = config.get("worker", {}).get("worker_id", f"vlm_worker_{uuid.uuid4().hex[:8]}")
         self.config = config
         self.running = False
         self.queue = None
         self.vlm_processor = None
-        self.poll_interval = config.get("poll_interval", 1)  # 轮询间隔（秒）
-        self.batch_size = config.get("batch_size", 1)  # 批处理大小
-        self.max_retries = config.get("max_retries", 3)  # 最大重试次数
+        self.poll_interval = config.get("worker", {}).get("poll_interval", 1)  # 轮询间隔（秒）
+        self.batch_size = config.get("worker", {}).get("batch_size", 1)  # 批处理大小
+        self.max_retries = config.get("worker", {}).get("max_retries", 3)  # 最大重试次数
     
     async def initialize(self) -> bool:
         """初始化队列和处理器"""
@@ -380,53 +380,20 @@ async def run_worker(config_path: str = None):
     else:
         logger.warning(f"配置文件不存在: {config_path}，将使用默认配置和环境变量")
     
-    # 使用环境变量覆盖配置
-    queue_host = os.environ.get("KAFKA_HOST", "localhost")
-    queue_port = os.environ.get("KAFKA_PORT", "9092")
-    
-    # 构建工作进程配置
-    worker_config = {
-        "worker_id": os.environ.get("WORKER_ID", config.get("worker", {}).get("worker_id", f"vlm_worker_{uuid.uuid4().hex[:8]}")),
-        "poll_interval": float(os.environ.get("POLL_INTERVAL", config.get("worker", {}).get("poll_interval", 0.5))),
-        "batch_size": int(os.environ.get("BATCH_SIZE", config.get("worker", {}).get("batch_size", 1))),
-        "max_retries": int(os.environ.get("MAX_RETRIES", config.get("worker", {}).get("max_retries", 3))),
-    }
-    
-    # 队列配置
-    queue_config = config.get("queue_config", {})
-    worker_config["queue_config"] = {
-        "bootstrap_servers": [f"{queue_host}:{queue_port}"],
-        "topic_name": os.environ.get("KAFKA_TOPIC", queue_config.get("topic_name", "video_processing")),
-        "consumer_group": os.environ.get("KAFKA_GROUP", queue_config.get("consumer_group", "vlm_workers")),
-        "use_kafka": os.environ.get("USE_KAFKA", str(queue_config.get("use_kafka", True))).lower() == "true",
-        "max_request_size": int(queue_config.get("max_request_size", 10485760)),
-        "timeout_default": float(queue_config.get("timeout_default", 30.0))
-    }
-    
-    # VLM配置
-    vlm_config = config.get("vlm_config", {})
-    worker_config["vlm_config"] = {
-        "base_url": os.environ.get("VLM_BASE_URL", vlm_config.get("base_url", "http://cc.komect.com/llm/vlgroup/")),
-        "api_key": os.environ.get("VLM_API_KEY", vlm_config.get("api_key", "EMPTY")),
-        "model_name": os.environ.get("VLM_MODEL", vlm_config.get("model_name", "Qwen2.5-VL-72B-Instruct-AWQ")),
-        "max_tokens": int(os.environ.get("VLM_MAX_TOKENS", vlm_config.get("max_tokens", 512))),
-        "temperature": float(os.environ.get("VLM_TEMPERATURE", vlm_config.get("temperature", 0.7))),
-        "timeout": float(os.environ.get("VLM_TIMEOUT", vlm_config.get("timeout", 30.0))),
-        "default_system_prompt": vlm_config.get("default_system_prompt", "")
-    }
-    
     # 设置日志级别
     log_config = config.get("logging", {})
     log_level = os.environ.get("LOG_LEVEL", log_config.get("level", "INFO"))
     setup_logging(log_level, log_config)
     
-    logger.info(f"工作进程配置: {worker_config['worker_id']}")
-    logger.info(f"队列主题: {worker_config['queue_config']['topic_name']}")
-    logger.info(f"VLM模型: {worker_config['vlm_config']['model_name']}")
+    logger.info(f"工作进程配置: {config['worker']['worker_id']}")
+    logger.info(f"队列主题: {config['queue_config']['topic_name']}")
+    logger.info(f"VLM模型: {config['vlm_config']['model_name']}")
+    logger.info(f"Kafka Bootstrap Servers: {config['queue_config']['bootstrap_servers']}")
+
     logger.info("后处理器将从消息中动态加载")
     
     # 创建并启动工作进程
-    worker = VLMWorker(worker_config)
+    worker = VLMWorker(config)
     if await worker.initialize():
         try:
             await worker.start()

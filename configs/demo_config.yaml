@@ -11,11 +11,6 @@ service:
   health_check_interval: 30.0
   metrics_collection_interval: 60.0
 
-# 摄像头配置
-camera:
-  camera_index: 0
-  fps: 1.0
-  resolution: [640, 480]
 
 # 相似帧过滤器配置
 similar_frame_filter:
@@ -29,7 +24,7 @@ similar_frame_filter:
 video_source:
   source_type: "camera"  # mock, file, camera, rtmp, webrtc
   source_path: null    # 视频文件路径或摄像头设备ID
-  fps: 30.0
+  fps: 1.0
   max_frames: null     # null表示无限制
   loop: false          # 是否循环播放（仅对文件有效）
   config:
@@ -82,8 +77,8 @@ preprocessors:
 queue:
   type: "kafka"  # 使用Kafka队列
   config:
-    bootstrap_servers: ["localhost:9092"]
-#    bootstrap_servers: ["36.137.208.254:5092"]  # 测试环境地址
+    # bootstrap_servers: ["localhost:9092"]
+    bootstrap_servers: ["36.137.208.165:5092"]  # 测试环境地址
     topic_name: "demo"
     consumer_group: "vlm_workers"
     use_kafka: true

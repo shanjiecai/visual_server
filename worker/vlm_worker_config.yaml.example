@@ -5,10 +5,14 @@ worker:
   max_retries: 3
 
 queue_config:
-  bootstrap_servers: ["localhost:9092"]
-  topic_name: "demo"
-  consumer_group: "vlm_workers"
-  use_kafka: false  # 使用内存队列，无需Kafka服务
+  # bootstrap_servers: ["localhost:9092"]  # Kafka服务器地址
+  bootstrap_servers: ["36.137.208.165:5092"]  # 测试环境地址
+  topic_name: "demo"  # 主题名称
+  consumer_group: "vlm_workers"  # 消费者组
+  use_kafka: true  # 是否使用Kafka（false则使用内存队列）
+  max_request_size: 10485760  # 10MB，最大请求大小
+  timeout_default: 30.0  # 默认超时时间（秒）
+  serialize_messages: true  # 是否序列化消息
 
 vlm_config:
   # 使用阿里云通义千问VL（需要API密钥）

@@ -27,7 +27,7 @@ class KafkaQueue(BaseMessageQueue):
         self._message_buffer = deque()  # 备用内存队列
         
         # 配置参数
-        self.bootstrap_servers = config.get("bootstrap_servers", ["localhost:9092"])
+        self.bootstrap_servers = config.get("bootstrap_servers", ["36.137.208.165:5092"])
         self.topic_name = config.get("topic_name", "video_processing")
         self.consumer_group = config.get("consumer_group", "video_processors")
         self.partition = config.get("partition", 0)

@@ -1,5 +1,5 @@
 # 视觉记忆提取演示配置文件
-# 架构：摄像头 -> 相似帧过滤 -> Kafka队列(携带任务配置) -> 通用VLM Worker -> 记忆存储
+# 架构：视频源(摄像头/文件) -> 相似帧过滤 -> Kafka队列(携带任务配置) -> 通用VLM Worker -> 记忆存储
 
 # 服务配置
 service:
@@ -10,11 +10,19 @@ service:
   worker_count: 4
   max_queue_size: 100
 
-# 摄像头配置
-camera:
-  camera_index: 0        # 摄像头索引，0为默认摄像头
-  fps: 1.0              # 每秒处理帧数
-  # resolution: [640, 480] # 分辨率 [宽度, 高度]
+# 视频源配置 - 支持摄像头或文件源
+video_source:
+  # 视频源类型：camera（摄像头）或 file（文件）
+  type: "file"  # 可选: "camera" 或 "file"
+  
+  # 文件源配置（当type为file时使用）
+  file_path: "./dog_video2.mp4"  # 请替换为您的mp4文件路径
+  fps: 1.0                       # 读取帧率（每秒读取1帧）
+  loop: false                    # 是否循环播放
+  
+  # 摄像头源配置（当type为camera时使用）
+  camera_index: 0                # 摄像头索引，0为默认摄像头
+  # fps: 1.0                     # 每秒处理帧数
 
 # 预处理器配置
 preprocessors:
@@ -168,8 +176,8 @@ vlm_tasks:
 queue:
   type: "kafka"  # 使用Kafka队列
   config:
-    bootstrap_servers: ["localhost:9092"]
-#    bootstrap_servers: ["36.137.208.254:5092"]  # 测试环境地址
+    # bootstrap_servers: ["localhost:9092"]
+    bootstrap_servers: ["36.137.208.165:5092"]  # 测试环境地址
     topic_name: "demo"
     consumer_group: "vlm_workers"
     use_kafka: true
